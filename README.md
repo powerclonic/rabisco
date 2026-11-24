@@ -27,21 +27,49 @@ O app fica no tray. Para abrir junto com o Windows: menu **⋯ → Iniciar com o
 | Fechar | `Esc` |
 | Lista / Quadro | `Ctrl+1` / `Ctrl+2` |
 | Concluir | clique no círculo ou `Espaço` |
+| Marcar / desmarcar "pra já" | `!` na tarefa selecionada (ou botão direito) |
 | Detalhes (descrição, prazo, grupo) | duplo clique ou `Enter` na tarefa |
 | Renomear rápido | `F2` |
 | Excluir / desfazer | `Del` / `Ctrl+Z` (ou o botão "Desfazer" no rodapé) |
 | Mover entre colunas ou reordenar | arrastar e soltar |
 
+### Pra já ⚡
+
+Para aquelas tarefas rápidas que você quer tirar da cabeça logo ("analisar o email que o Fulano vai mandar", "investigar o erro X"), comece com `!`:
+
+```
+!analisar email do Fulano
+!investigar erro no deploy #trabalho
+```
+
+Elas ficam sempre no topo (na lista e no quadro), ganham uma faixa amarela e, em vez de prazo, mostram **há quanto tempo estão esperando**: "há 40 min" → amarelo depois de 4h → vermelho depois de 1 dia (se está parada há um dia, não era tão rápida assim). O rodapé mostra quantas "pra já" estão abertas.
+
+### Lista agrupada
+
+A lista se organiza sozinha em seções, cada uma recolhível com um clique no cabeçalho:
+
+| Seção | O que entra | Ordem |
+| --- | --- | --- |
+| ⚡ Pra já | marcadas com `!` | manual |
+| ▶ Fazendo | em andamento | manual |
+| ⏰ Hoje e atrasadas | prazo hoje ou vencido | por prazo |
+| 📅 Próximos dias | prazo futuro | por prazo |
+| • Sem prazo | o resto | manual (arrastando) |
+| ✓ Feitas | concluídas (recolhida por padrão) | — |
+
+Seções vazias não aparecem. Arrastar uma tarefa para outra seção ajusta o que define a seção (ex.: soltar em "Pra já" marca como pra já; em "Fazendo" muda o status). Para voltar à lista plana: menu **⋯ → Agrupar lista em seções**.
+
 ### Digitação rápida
 
-Dá para definir grupo e prazo direto no campo:
+Dá para definir pra já, grupo e prazo direto no campo:
 
 ```
 pagar boleto @10/12
 ligar pro banco #casa @amanhã 14h
-deploy @hoje 18:30 #trabalho
+!deploy @hoje 18:30 #trabalho
 ```
 
+- `!` no começo — pra já
 - `#grupo` — coloca no grupo (cria se não existir)
 - `@hoje`, `@amanhã`, `@seg`…`@dom`, `@25/12`, `@25/12/27`, `@3d` (daqui a 3 dias), `@15h`
 - depois da data pode vir uma hora: `14h`, `14h30`, `14:30`
@@ -66,6 +94,7 @@ rabisco/
   app.py               instância única, tema, tray, atalho global, loop do Qt
   config.py            constantes, cores, caminhos, log de erros
   dates.py             prazos: digitação rápida e rótulos (sem Qt)
+  sections.py          agrupamento da lista em seções (sem Qt)
   store.py             tarefas, grupos, persistência, desfazer
   winapi.py            Win32: hotkey global, sempre no topo, cantos arredondados, autostart
   ui/

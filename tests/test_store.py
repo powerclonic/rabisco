@@ -103,3 +103,39 @@ def test_arquivo_corrompido_vira_backup(tmp_path, monkeypatch):
     s = Store(f)
     assert s.tasks == []
     assert any(p.name.startswith("dados.corrompido-") for p in tmp_path.iterdir())
+
+
+def test_pra_ja(store):
+    a, b = store.add("a"), store.add("b")
+    q = store.add("rápida", quick=True)
+    assert q.quick and q.quick_since
+    store.set_quick(a.id, True)
+    assert store.get(a.id).quick and store.tasks[0].id == a.id  # sobe pro topo
+    store.toggle_quick(a.id)
+    assert not store.get(a.id).quick and store.get(a.id).quick_since is None
+    store.set_status(b.id, "done")
+    store.set_quick(b.id, True)  # marcar pra já reabre a tarefa
+    assert store.get(b.id).status == "todo"
+
+
+def test_drop_into_section(store):
+    a, b = store.add("a"), store.add("b", "doing")
+    store.drop_into_section(a.id, "quick", None)
+    assert store.get(a.id).quick
+    store.drop_into_section(a.id, "doing", b.id)
+    t = store.get(a.id)
+    assert not t.quick and t.status == "doing" and texts(store, "doing") == ["a", "b"]
+    store.drop_into_section(b.id, "nodue", b.id)  # mesmo lugar: só atributos
+    assert store.get(b.id).status == "todo"
+    store.drop_into_section(b.id, "done", None)
+    assert store.get(b.id).status == "done"
+
+
+def test_collapsed_e_settings_isolados(tmp_path):
+    s1, s2 = Store(tmp_path / "a.json"), Store(tmp_path / "b.json")
+    s1.toggle_collapsed("nodue")
+    assert "nodue" in s1.settings["collapsed"] and "nodue" not in s2.settings["collapsed"]
+    s1.toggle_collapsed("done")
+    assert s1.settings["collapsed"] == ["nodue"]
+    s1.save_now()
+    assert Store(tmp_path / "a.json").settings["collapsed"] == ["nodue"]

@@ -77,9 +77,17 @@ def _parse_date(tok: str, today: dt.date) -> dt.date | None:
 
 
 def parse_quick(text: str, now: dt.datetime | None = None):
-    """'ligar pro banco #casa @amanhã 14h' -> ('ligar pro banco', '2026-11-25 14:00', 'casa')"""
+    """Lê a digitação rápida.
+
+    '!ligar pro banco #casa @amanhã 14h' -> ('ligar pro banco', '2026-11-25 14:00', 'casa', True)
+    O '!' no começo marca a tarefa como "pra já".
+    """
     now = now or dt.datetime.now()
     today = now.date()
+    text = text.strip()
+    quick = text.startswith("!")
+    if quick:
+        text = text.lstrip("! ")
     toks = text.split()
     out, due, group = [], None, None
     i = 0
@@ -106,7 +114,7 @@ def parse_quick(text: str, now: dt.datetime | None = None):
                 continue
         out.append(tok)
         i += 1
-    return " ".join(out), due, group
+    return " ".join(out), due, group, quick
 
 
 def due_display(due: str | None, done: bool, now: dt.datetime | None = None):
@@ -141,3 +149,39 @@ def due_display(due: str | None, done: bool, now: dt.datetime | None = None):
 
 def is_overdue(t: "Task", now: dt.datetime | None = None) -> bool:
     return t.status != "done" and due_display(t.due, False, now)[1] == C["danger"]
+
+
+def is_due_today_or_late(t: "Task", now: dt.datetime | None = None) -> bool:
+    d, _ = split_due(t.due)
+    return d is not None and d <= (now or dt.datetime.now()).date()
+
+
+def due_sort_key(due: str | None):
+    """Ordena por data; sem hora conta como 'qualquer hora do dia' (depois das com hora)."""
+    d, tm = split_due(due)
+    return (d or dt.date.max, tm or "24:00")
+
+
+QUICK_WARN_SECS = 4 * 3600     # "pra já" esperando há 4h: amarelo
+QUICK_LATE_SECS = 24 * 3600    # há 1 dia: vermelho (não era tão rápida assim)
+
+
+def age_display(since: float | None, now: dt.datetime | None = None):
+    """Há quanto tempo uma tarefa "pra já" está esperando -> (rótulo, cor)."""
+    if not since:
+        return "", C["muted"]
+    secs = max(0.0, (now or dt.datetime.now()).timestamp() - since)
+    mins = int(secs // 60)
+    if mins < 1:
+        label = "agora"
+    elif mins < 60:
+        label = f"há {mins} min"
+    elif mins < 60 * 24:
+        label = f"há {mins // 60}h"
+    else:
+        label = f"há {mins // (60 * 24)}d"
+    if secs >= QUICK_LATE_SECS:
+        return label, C["danger"]
+    if secs >= QUICK_WARN_SECS:
+        return label, C["accent"]
+    return label, C["soft"]

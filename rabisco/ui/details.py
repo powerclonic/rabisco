@@ -77,6 +77,11 @@ class DetailPage(QWidget):
         lay.addWidget(self.notes, 1)
 
         # prazo
+        self.quick = QCheckBox("Pra já — rápida, resolver o quanto antes")
+        self.quick.setToolTip("Fica no topo da lista e mostra há quanto tempo está esperando")
+        self.quick.toggled.connect(self._quick_toggled)
+        lay.addWidget(self.quick)
+
         due_row = QHBoxLayout()
         due_row.setSpacing(6)
         self.due_on = QCheckBox("Prazo")
@@ -140,6 +145,9 @@ class DetailPage(QWidget):
         self.date.setEnabled(d is not None)
         self.time.setEnabled(d is not None)
         self.status_btns[t.status].setChecked(True)
+        self.quick.blockSignals(True)
+        self.quick.setChecked(t.quick)
+        self.quick.blockSignals(False)
         self.sync_groups()
         meta = f"Criada em {time.strftime('%d/%m/%Y %H:%M', time.localtime(t.created))}"
         if t.done_at:
@@ -162,6 +170,9 @@ class DetailPage(QWidget):
         self.group.setCurrentIndex(max(0, idx))
         self.group.blockSignals(False)
         self.status_btns[t.status].setChecked(True)
+        self.quick.blockSignals(True)
+        self.quick.setChecked(t.quick)
+        self.quick.blockSignals(False)
 
     # salvar
     def _save_title(self, text: str):
@@ -215,6 +226,10 @@ class DetailPage(QWidget):
             self.sync_groups()
             return
         self.store.update_task(self.tid, group=data or None)
+
+    def _quick_toggled(self, on: bool):
+        if not self._loading and self.tid:
+            self.store.set_quick(self.tid, on)
 
     def _set_status(self, st: str):
         if self.tid:
