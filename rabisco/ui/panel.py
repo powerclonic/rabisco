@@ -16,6 +16,7 @@ from ..config import (
     GROUP_COLORS, INPUT_HELP, IS_WIN, LIST_WIDTH, MAX_HEIGHT, SLIDE, STATUS_LABEL, STATUSES,
 )
 from ..dates import is_overdue, make_due, parse_quick, split_due
+from ..sections import build_sections, quick_first
 from ..store import Group, Store, Task
 from ..winapi import get_autostart, set_autostart
 from .details import DetailPage
@@ -194,12 +195,20 @@ class Panel(QWidget):
         self.btn_pin.blockSignals(False)
 
     def _wire(self, lst: TaskList):
-        lst.dropped.connect(lambda tid, st, before: self.store.move(tid, st or None, before or None))
+        lst.dropped.connect(self._on_drop)
         lst.toggleRequested.connect(self.store.toggle_done)
+        lst.quickRequested.connect(self.store.toggle_quick)
+        lst.headerToggled.connect(self.store.toggle_collapsed)
         lst.deleteRequested.connect(self.delete_task)
         lst.detailsRequested.connect(self.open_details)
         lst.editedText.connect(lambda tid, text: self.store.update_task(tid, text=text))
         lst.menuRequested.connect(lambda tid, pos, lst=lst: self._task_menu(lst, tid, pos))
+
+    def _on_drop(self, tid: str, status: str, before: str, section: str):
+        if section:  # lista agrupada: a seção de destino define pra já / status
+            self.store.drop_into_section(tid, section, before or None)
+        else:
+            self.store.move(tid, status or None, before or None)
 
     def _build_menu(self):
         m = self.menu = QMenu(self)
@@ -214,6 +223,10 @@ class Panel(QWidget):
         self.act_hide_done = m.addAction("Ocultar feitas na lista")
         self.act_hide_done.setCheckable(True)
         self.act_hide_done.toggled.connect(self._set_hide_done)
+        self.act_smart = m.addAction("Agrupar lista em seções")
+        self.act_smart.setCheckable(True)
+        self.act_smart.toggled.connect(
+            lambda on: (self.store.set_setting("sort", "smart" if on else "manual"), self.refresh()))
 
         side = m.addMenu("Lado da tela")
         grp = QActionGroup(self)
@@ -243,7 +256,8 @@ class Panel(QWidget):
     def _sync_menu(self):
         s = self.store.settings
         for act, val in ((self.act_pin, s["pinned"]), (self.act_autohide, s["autohide"]),
-                         (self.act_hide_done, s["hide_done"])):
+                         (self.act_hide_done, s["hide_done"]),
+                         (self.act_smart, s["sort"] == "smart")):
             act.blockSignals(True)
             act.setChecked(bool(val))
             act.blockSignals(False)
@@ -302,12 +316,17 @@ class Panel(QWidget):
             groups = {g.id: g for g in s.groups}
             show_group = s.settings["filter"] == "all"
             if self.stack.currentIndex() == 0:
-                pending = [t for t in vis if t.status != "done"]
-                done = [] if s.settings["hide_done"] else [t for t in vis if t.status == "done"]
-                self.list_view.set_tasks(pending + done, groups, show_group)
+                if s.settings["sort"] == "smart":
+                    self.list_view.set_tasks([], groups, show_group,
+                                             sections=build_sections(vis, s.settings["hide_done"]),
+                                             collapsed=s.settings["collapsed"])
+                else:
+                    pending = quick_first([t for t in vis if t.status != "done"])
+                    done = [] if s.settings["hide_done"] else [t for t in vis if t.status == "done"]
+                    self.list_view.set_tasks(pending + done, groups, show_group)
             else:
                 for st, col in self.columns.items():
-                    col.set_tasks([t for t in vis if t.status == st], groups, show_group)
+                    col.set_tasks(quick_first([t for t in vis if t.status == st]), groups, show_group)
 
         counts = {"all": sum(t.status != "done" for t in s.tasks)}
         for t in s.tasks:
@@ -329,7 +348,10 @@ class Panel(QWidget):
         pending = [t for t in vis if t.status != "done"]
         n = len(pending)
         late = sum(is_overdue(t) for t in pending)
+        quick = sum(t.quick for t in pending)
         txt = "tudo em dia" if n == 0 else f"{n} pendente{'s' if n != 1 else ''}"
+        if quick:
+            txt += f"  ·  <span style='color:{C['accent']}'>{quick} pra já</span>"
         if late:
             txt += f"  ·  <span style='color:{C['danger']}'>{late} atrasada{'s' if late != 1 else ''}</span>"
         self.counter.setText(txt)
@@ -351,7 +373,7 @@ class Panel(QWidget):
         mods = QApplication.keyboardModifiers()
         shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
         details = details or bool(mods & Qt.KeyboardModifier.ControlModifier)
-        title, due, gname = parse_quick(self.input.text())
+        title, due, gname, quick = parse_quick(self.input.text())
         if not title:
             self.input.setFocus()
             return
@@ -361,7 +383,7 @@ class Panel(QWidget):
             gid = g.id if g else None
         elif self.store.settings["filter"] != "all":
             gid = self.store.settings["filter"]
-        t = self.store.add(title, "doing" if shift else "todo", group=gid, due=due)
+        t = self.store.add(title, "doing" if shift else "todo", group=gid, due=due, quick=quick)
         if t:
             self.input.clear()
             if details:
@@ -390,6 +412,9 @@ class Panel(QWidget):
             return
         m = QMenu(self)
         m.addAction("Detalhes…\tEnter", lambda: self.open_details(tid))
+        a = m.addAction("Pra já\t!", lambda: self.store.toggle_quick(tid))
+        a.setCheckable(True)
+        a.setChecked(t.quick)
         m.addAction("Renomear\tF2", lambda: lst.editItem(lst.currentItem()))
         mv = m.addMenu("Mover para")
         for st in STATUSES:

@@ -56,6 +56,8 @@ DEFAULT_SETTINGS = {
     "autohide": False,     # esconder ao perder o foco
     "side": "right",       # right | left
     "filter": "all",       # all | id do grupo
+    "sort": "smart",       # smart (seções) | manual (lista plana)
+    "collapsed": ["done"], # seções recolhidas na lista
     "hotkey": "Ctrl+Alt+K",
 }
 
@@ -63,8 +65,11 @@ DEFAULT_SETTINGS = {
 ICON_FONTS = ["Segoe Fluent Icons", "Segoe MDL2 Assets"]
 G_PIN, G_PINNED, G_MORE, G_CLOSE = "\uE718", "\uE840", "\uE712", "\uE8BB"
 G_BACK, G_DELETE, G_CAL, G_EXPAND = "\uE72B", "\uE74D", "\uE787", "\uE70F"
+G_BOLT, G_PLAY, G_CLOCK, G_LIST, G_CHECK = "\uE945", "\uE768", "\uE823", "\uE8FD", "\uE73E"
+G_CHEVRON_DOWN, G_CHEVRON_RIGHT = "\uE70D", "\uE76C"
 
 INPUT_HELP = ("Enter: adiciona  ·  Shift+Enter: em Fazendo  ·  Ctrl+Enter: abre detalhes\n"
+              "!  no começo: pra já (rápida, fazer o quanto antes)\n"
               "#grupo  coloca num grupo (cria se não existir)\n"
               "@hoje  @amanhã  @sex  @25/12  @3d  define prazo — pode seguir hora: 14h, 14:30")
 

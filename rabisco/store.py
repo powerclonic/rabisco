@@ -14,6 +14,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from .config import DEFAULT_SETTINGS, GROUP_COLORS, STATUSES, log_error
 from .dates import split_due
 
+
 @dataclass
 class Task:
     text: str                       # título
@@ -24,6 +25,8 @@ class Task:
     notes: str = ""                 # descrição (opcional)
     due: str | None = None          # prazo (opcional)
     group: str | None = None        # id do grupo (opcional)
+    quick: bool = False             # "pra já": rápida, fazer o quanto antes
+    quick_since: float | None = None  # desde quando está marcada como pra já
 
 
 @dataclass
@@ -43,7 +46,7 @@ class Store(QObject):
         self.path = path
         self.tasks: list[Task] = []
         self.groups: list[Group] = []
-        self.settings: dict = dict(DEFAULT_SETTINGS)
+        self.settings: dict = copy.deepcopy(DEFAULT_SETTINGS)
         self._undo: list[tuple[list[Task], list[Group]]] = []
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
@@ -81,12 +84,18 @@ class Store(QObject):
                 if split_due(t.due)[0] is None:
                     t.due = None
                 t.notes = t.notes or ""
+                t.quick = bool(t.quick)
+                t.quick_since = (t.quick_since or t.created) if t.quick else None
                 self.tasks.append(t)
         s = raw.get("settings", {})
         if isinstance(s, dict):
             self.settings.update({k: v for k, v in s.items() if k in DEFAULT_SETTINGS})
         if self.settings["filter"] != "all" and self.settings["filter"] not in gids:
             self.settings["filter"] = "all"
+        if self.settings["sort"] not in ("smart", "manual"):
+            self.settings["sort"] = "smart"
+        if not isinstance(self.settings["collapsed"], list):
+            self.settings["collapsed"] = list(DEFAULT_SETTINGS["collapsed"])
 
     def save_now(self) -> None:
         self._save_timer.stop()
@@ -106,6 +115,15 @@ class Store(QObject):
     def _touch(self) -> None:
         self.changed.emit()
         self.schedule_save()
+
+    def toggle_collapsed(self, section: str) -> None:
+        col = self.settings["collapsed"]
+        if section in col:
+            col.remove(section)
+        else:
+            col.append(section)
+        self.schedule_save()
+        self.changed.emit()
 
     def set_setting(self, key: str, value) -> None:
         self.settings[key] = value
@@ -139,11 +157,12 @@ class Store(QObject):
         self.tasks.insert(idx, t)
 
     def add(self, text: str, status: str = "todo", group: str | None = None,
-            due: str | None = None) -> Task | None:
+            due: str | None = None, quick: bool = False) -> Task | None:
         text = " ".join(text.split())
         if not text:
             return None
-        t = Task(text=text, status=status, group=group if self.get_group(group) else None, due=due)
+        t = Task(text=text, status=status, group=group if self.get_group(group) else None, due=due,
+                 quick=quick, quick_since=time.time() if quick else None)
         self._insert_first_of_group(t)
         self._touch()
         return t
@@ -179,6 +198,49 @@ class Store(QObject):
         self._apply_status(t, status)
         self._insert_first_of_group(t)
         self._touch()
+
+    def set_quick(self, tid: str, on: bool) -> None:
+        """Marca/desmarca como "pra já". Ao marcar, sobe para o topo da sua coluna."""
+        t = self.get(tid)
+        if not t or t.quick == on:
+            return
+        t.quick = on
+        t.quick_since = time.time() if on else None
+        if on:
+            self.tasks.remove(t)
+            if t.status == "done":
+                self._apply_status(t, "todo")
+            self._insert_first_of_group(t)
+        self._touch()
+
+    def toggle_quick(self, tid: str) -> None:
+        t = self.get(tid)
+        if t:
+            self.set_quick(tid, not t.quick)
+
+    def drop_into_section(self, tid: str, section: str, before_id: str | None) -> None:
+        """Arrastar para uma seção da lista agrupada ajusta o que define a seção e reposiciona."""
+        t = self.get(tid)
+        if not t:
+            return
+        if section == "quick":
+            if not t.quick:
+                t.quick, t.quick_since = True, time.time()
+            if t.status == "done":
+                self._apply_status(t, "todo")
+        elif section == "doing":
+            t.quick, t.quick_since = False, None
+            self._apply_status(t, "doing")
+        elif section == "done":
+            self._apply_status(t, "done")
+        else:  # due / soon / nodue: é o prazo que decide onde ela aparece
+            t.quick, t.quick_since = False, None
+            if t.status != "todo":
+                self._apply_status(t, "todo")
+        if before_id == tid:  # soltou no mesmo lugar: só os atributos mudaram
+            self._touch()
+        else:
+            self.move(tid, None, before_id)
 
     def toggle_done(self, tid: str) -> None:
         t = self.get(tid)
