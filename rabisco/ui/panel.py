@@ -198,6 +198,7 @@ class Panel(QWidget):
         lst.dropped.connect(self._on_drop)
         lst.toggleRequested.connect(self.store.toggle_done)
         lst.quickRequested.connect(self.store.toggle_quick)
+        lst.delegateRequested.connect(self.store.toggle_delegated)
         lst.headerToggled.connect(self.store.toggle_collapsed)
         lst.deleteRequested.connect(self.delete_task)
         lst.detailsRequested.connect(self.open_details)
@@ -345,7 +346,9 @@ class Panel(QWidget):
                 self.details.sync_groups()
 
     def _update_counter(self, vis: list[Task]):
-        pending = [t for t in vis if t.status != "done"]
+        open_ = [t for t in vis if t.status != "done"]
+        pending = [t for t in open_ if not t.delegated]  # o que está no seu prato
+        delegated = len(open_) - len(pending)
         n = len(pending)
         late = sum(is_overdue(t) for t in pending)
         quick = sum(t.quick for t in pending)
@@ -354,6 +357,8 @@ class Panel(QWidget):
             txt += f"  ·  <span style='color:{C['accent']}'>{quick} pra já</span>"
         if late:
             txt += f"  ·  <span style='color:{C['danger']}'>{late} atrasada{'s' if late != 1 else ''}</span>"
+        if delegated:
+            txt += f"  ·  <span style='color:{C['delegated']}'>{delegated} delegada{'s' if delegated != 1 else ''}</span>"
         self.counter.setText(txt)
 
     def _tick(self):
@@ -373,7 +378,7 @@ class Panel(QWidget):
         mods = QApplication.keyboardModifiers()
         shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
         details = details or bool(mods & Qt.KeyboardModifier.ControlModifier)
-        title, due, gname, quick = parse_quick(self.input.text())
+        title, due, gname, quick, delegate = parse_quick(self.input.text())
         if not title:
             self.input.setFocus()
             return
@@ -383,7 +388,8 @@ class Panel(QWidget):
             gid = g.id if g else None
         elif self.store.settings["filter"] != "all":
             gid = self.store.settings["filter"]
-        t = self.store.add(title, "doing" if shift else "todo", group=gid, due=due, quick=quick)
+        t = self.store.add(title, "doing" if shift else "todo", group=gid, due=due, quick=quick,
+                           delegate=delegate)
         if t:
             self.input.clear()
             if details:
@@ -415,6 +421,10 @@ class Panel(QWidget):
         a = m.addAction("Pra já\t!", lambda: self.store.toggle_quick(tid))
         a.setCheckable(True)
         a.setChecked(t.quick)
+        a = m.addAction("Delegada\t>", lambda: self.store.toggle_delegated(tid))
+        a.setCheckable(True)
+        a.setChecked(t.delegated)
+        m.addAction("Delegar para…", lambda: self.ask_delegate(tid))
         m.addAction("Renomear\tF2", lambda: lst.editItem(lst.currentItem()))
         mv = m.addMenu("Mover para")
         for st in STATUSES:
@@ -476,6 +486,19 @@ class Panel(QWidget):
         self.input.setFocus()
 
     # grupos
+    def ask_delegate(self, tid: str) -> None:
+        """Pergunta pra quem (com as pessoas já usadas na lista); vazio = delegada sem nome."""
+        t = self.store.get(tid)
+        if not t:
+            return
+        names = self.store.delegate_names()
+        current = t.delegated_to if t.delegated_to in names else ""
+        items = [""] + names
+        name, ok = QInputDialog.getItem(self, "Delegar", "Pra quem? (opcional)", items,
+                                        items.index(current), True)
+        if ok:
+            self.store.set_delegated(tid, True, name)
+
     def ask_group_name(self, title: str, text: str = "") -> str | None:
         name, ok = QInputDialog.getText(self, title, "Nome do grupo:", QLineEdit.EchoMode.Normal, text)
         name = " ".join(name.split()) if ok else ""

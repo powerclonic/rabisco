@@ -139,3 +139,34 @@ def test_collapsed_e_settings_isolados(tmp_path):
     assert s1.settings["collapsed"] == ["nodue"]
     s1.save_now()
     assert Store(tmp_path / "a.json").settings["collapsed"] == ["nodue"]
+
+
+def test_delegar(store):
+    a = store.add("a")
+    store.set_delegated(a.id, True)
+    t = store.get(a.id)
+    assert t.delegated and t.delegated_to == "" and t.delegated_since
+    store.set_delegated(a.id, True, "  Ana  Paula ")
+    assert t.delegated_to == "Ana Paula"
+    store.set_quick(a.id, True)  # pra já e delegada são excludentes
+    assert t.quick and not t.delegated and t.delegated_to == ""
+    store.toggle_delegated(a.id)
+    assert t.delegated and not t.quick
+
+
+def test_add_delegada_e_nomes(store):
+    store.add("x", delegate="Bruno")
+    store.add("y", delegate="")
+    store.add("z", delegate="ana", quick=True)
+    assert [(t.text, t.delegated, t.delegated_to, t.quick) for t in store.tasks] == [
+        ("z", True, "ana", False), ("y", True, "", False), ("x", True, "Bruno", False)]
+    assert store.delegate_names() == ["ana", "Bruno"]
+
+
+def test_drop_em_delegadas_e_de_volta(store):
+    a = store.add("a", quick=True)
+    store.drop_into_section(a.id, "delegated", None)
+    t = store.get(a.id)
+    assert t.delegated and not t.quick
+    store.drop_into_section(a.id, "nodue", None)
+    assert not t.delegated and t.delegated_since is None

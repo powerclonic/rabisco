@@ -100,6 +100,12 @@ def stylesheet() -> str:
         selection-background-color:{C['accent']}; selection-color:{C['bg']};
     }}
     QPlainTextEdit#notes:focus {{ border-color:{C['accent']}; }}
+    QLineEdit#field {{
+        background:{C['surface']}; border:1px solid {C['border']}; border-radius:6px; padding:4px 8px;
+        min-height:22px; selection-background-color:{C['accent']}; selection-color:{C['bg']};
+    }}
+    QLineEdit#field:focus {{ border-color:{C['accent']}; }}
+    QLineEdit#field:disabled {{ color:{C['muted']}; background:{C['bg']}; }}
     QDateEdit, QTimeEdit, QComboBox {{
         background:{C['surface']}; border:1px solid {C['border']}; border-radius:6px;
         padding:4px 8px; min-height:22px;

@@ -12,4 +12,6 @@ ROLE_KIND = ROLE_ID + 7          # "task" | "header"
 ROLE_SECTION = ROLE_ID + 8       # chave da seção (lista agrupada) ou ""
 ROLE_COUNT = ROLE_ID + 9         # cabeçalho: nº de tarefas
 ROLE_COLLAPSED = ROLE_ID + 10    # cabeçalho: recolhido?
+ROLE_DELEG_SINCE = ROLE_ID + 11  # float (0 = não delegada)
+ROLE_DELEG_TO = ROLE_ID + 12     # pra quem foi delegada ("" = não informado)
 MIME = "application/x-rabisco-task"
