@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QDate, Qt, QTime
 from PySide6.QtWidgets import (
-    QAbstractSpinBox, QCheckBox, QComboBox, QDateEdit, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QAbstractSpinBox, QCheckBox, QComboBox, QCompleter, QDateEdit, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QPlainTextEdit, QPushButton, QSizePolicy, QTimeEdit, QVBoxLayout, QWidget,
 )
 
@@ -82,6 +82,19 @@ class DetailPage(QWidget):
         self.quick.toggled.connect(self._quick_toggled)
         lay.addWidget(self.quick)
 
+        deleg_row = QHBoxLayout()
+        deleg_row.setSpacing(8)
+        self.delegated = QCheckBox("Delegada")
+        self.delegated.setToolTip("Está com outra pessoa: vai pra seção Delegadas e mostra há quanto tempo")
+        self.delegated.toggled.connect(self._delegated_toggled)
+        self.delegate_to = QLineEdit()
+        self.delegate_to.setObjectName("field")
+        self.delegate_to.setPlaceholderText("pra quem? (opcional)")
+        self.delegate_to.textEdited.connect(self._save_delegate_to)
+        deleg_row.addWidget(self.delegated)
+        deleg_row.addWidget(self.delegate_to, 1)
+        lay.addLayout(deleg_row)
+
         due_row = QHBoxLayout()
         due_row.setSpacing(6)
         self.due_on = QCheckBox("Prazo")
@@ -148,8 +161,18 @@ class DetailPage(QWidget):
         self.quick.blockSignals(True)
         self.quick.setChecked(t.quick)
         self.quick.blockSignals(False)
+        self.delegated.blockSignals(True)
+        self.delegated.setChecked(t.delegated)
+        self.delegated.blockSignals(False)
+        self.delegate_to.setEnabled(t.delegated)
+        self.delegate_to.setText(t.delegated_to)
+        completer = QCompleter(self.store.delegate_names(), self.delegate_to)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.delegate_to.setCompleter(completer)
         self.sync_groups()
         meta = f"Criada em {time.strftime('%d/%m/%Y %H:%M', time.localtime(t.created))}"
+        if t.delegated and t.delegated_since:
+            meta += f"  ·  delegada em {time.strftime('%d/%m %H:%M', time.localtime(t.delegated_since))}"
         if t.done_at:
             meta += f"  ·  feita em {time.strftime('%d/%m %H:%M', time.localtime(t.done_at))}"
         self.meta.setText(meta)
@@ -173,6 +196,10 @@ class DetailPage(QWidget):
         self.quick.blockSignals(True)
         self.quick.setChecked(t.quick)
         self.quick.blockSignals(False)
+        self.delegated.blockSignals(True)
+        self.delegated.setChecked(t.delegated)
+        self.delegated.blockSignals(False)
+        self.delegate_to.setEnabled(t.delegated)
 
     # salvar
     def _save_title(self, text: str):
@@ -226,6 +253,18 @@ class DetailPage(QWidget):
             self.sync_groups()
             return
         self.store.update_task(self.tid, group=data or None)
+
+    def _delegated_toggled(self, on: bool):
+        if not self._loading and self.tid:
+            self.store.set_delegated(self.tid, on, self.delegate_to.text() if on else None)
+            if on:
+                self.delegate_to.setFocus()
+            else:
+                self.delegate_to.clear()
+
+    def _save_delegate_to(self, text: str):
+        if not self._loading and self.tid:
+            self.store.update_task(self.tid, delegated_to=text)
 
     def _quick_toggled(self, on: bool):
         if not self._loading and self.tid:

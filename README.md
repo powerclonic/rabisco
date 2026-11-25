@@ -28,6 +28,7 @@ O app fica no tray. Para abrir junto com o Windows: menu **⋯ → Iniciar com o
 | Lista / Quadro | `Ctrl+1` / `Ctrl+2` |
 | Concluir | clique no círculo ou `Espaço` |
 | Marcar / desmarcar "pra já" | `!` na tarefa selecionada (ou botão direito) |
+| Marcar / desmarcar delegada | `>` na tarefa selecionada (ou botão direito → *Delegar para…*) |
 | Detalhes (descrição, prazo, grupo) | duplo clique ou `Enter` na tarefa |
 | Renomear rápido | `F2` |
 | Excluir / desfazer | `Del` / `Ctrl+Z` (ou o botão "Desfazer" no rodapé) |
@@ -44,6 +45,21 @@ Para aquelas tarefas rápidas que você quer tirar da cabeça logo ("analisar o 
 
 Elas ficam sempre no topo (na lista e no quadro), ganham uma faixa amarela e, em vez de prazo, mostram **há quanto tempo estão esperando**: "há 40 min" → amarelo depois de 4h → vermelho depois de 1 dia (se está parada há um dia, não era tão rápida assim). O rodapé mostra quantas "pra já" estão abertas.
 
+### Delegadas ↗
+
+Para o que você passou pra alguém e só precisa acompanhar. Dizer pra quem é opcional:
+
+```
+>Ana revisar o contrato
+revisar PR do backend >
+> levantar números do Q3
+```
+
+- `>Nome` em qualquer lugar: delegada pra Nome
+- `>` sozinho no começo ou no fim: delegada sem dizer pra quem
+
+Delegadas vão para a seção **Delegadas** (abaixo de "Sem prazo", já que não estão no seu prato), ficam no fim das colunas do quadro e mostram **"Ana · há 2d"**: amarelo depois de 3 dias (hora de cobrar), vermelho depois de 1 semana. Não contam como pendentes no rodapé, que mostra quantas estão delegadas à parte. Nos detalhes há o checkbox *Delegada* e um campo "pra quem" que autocompleta com as pessoas já usadas. Pra já e delegada são excludentes: marcar uma desmarca a outra.
+
 ### Lista agrupada
 
 A lista se organiza sozinha em seções, cada uma recolhível com um clique no cabeçalho:
@@ -55,6 +71,7 @@ A lista se organiza sozinha em seções, cada uma recolhível com um clique no c
 | ⏰ Hoje e atrasadas | prazo hoje ou vencido | por prazo |
 | 📅 Próximos dias | prazo futuro | por prazo |
 | • Sem prazo | o resto | manual (arrastando) |
+| ↗ Delegadas | marcadas como delegadas | manual |
 | ✓ Feitas | concluídas (recolhida por padrão) | — |
 
 Seções vazias não aparecem. Arrastar uma tarefa para outra seção ajusta o que define a seção (ex.: soltar em "Pra já" marca como pra já; em "Fazendo" muda o status). Para voltar à lista plana: menu **⋯ → Agrupar lista em seções**.
@@ -70,6 +87,7 @@ ligar pro banco #casa @amanhã 14h
 ```
 
 - `!` no começo — pra já
+- `>Nome` ou `>` no começo/fim — delegada
 - `#grupo` — coloca no grupo (cria se não existir)
 - `@hoje`, `@amanhã`, `@seg`…`@dom`, `@25/12`, `@25/12/27`, `@3d` (daqui a 3 dias), `@15h`
 - depois da data pode vir uma hora: `14h`, `14h30`, `14:30`

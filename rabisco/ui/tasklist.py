@@ -14,8 +14,8 @@ from ..sections import SectionInfo
 from ..store import Group, Task
 from .delegate import CardDelegate
 from .roles import (
-    MIME, ROLE_COLLAPSED, ROLE_COUNT, ROLE_DUE, ROLE_GCOLOR, ROLE_GNAME, ROLE_ID, ROLE_KIND,
-    ROLE_NOTES, ROLE_QUICK_SINCE, ROLE_SECTION, ROLE_STATUS,
+    MIME, ROLE_COLLAPSED, ROLE_COUNT, ROLE_DELEG_SINCE, ROLE_DELEG_TO, ROLE_DUE, ROLE_GCOLOR,
+    ROLE_GNAME, ROLE_ID, ROLE_KIND, ROLE_NOTES, ROLE_QUICK_SINCE, ROLE_SECTION, ROLE_STATUS,
 )
 
 Sections = list[tuple[SectionInfo, list[Task]]]
@@ -28,6 +28,7 @@ class TaskList(QListWidget):
     dropped = Signal(str, str, str, str)
     toggleRequested = Signal(str)
     quickRequested = Signal(str)
+    delegateRequested = Signal(str)
     headerToggled = Signal(str)
     deleteRequested = Signal(str)
     detailsRequested = Signal(str)
@@ -106,17 +107,22 @@ class TaskList(QListWidget):
         it.setData(ROLE_NOTES, t.notes)
         it.setData(ROLE_DUE, t.due or "")
         it.setData(ROLE_QUICK_SINCE, float(t.quick_since or 0) if t.quick else 0.0)
+        it.setData(ROLE_DELEG_SINCE, float(t.delegated_since or 0) if t.delegated else 0.0)
+        it.setData(ROLE_DELEG_TO, t.delegated_to if t.delegated else "")
         g = groups.get(t.group) if show_group and t.group else None
         it.setData(ROLE_GNAME, g.name if g else "")
         it.setData(ROLE_GCOLOR, g.color if g else "")
         it.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
                     | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsDragEnabled)
         tip = f"Criada em {time.strftime('%d/%m %H:%M', time.localtime(t.created))}"
+        if t.delegated and t.delegated_since:
+            who = f" para {t.delegated_to}" if t.delegated_to else ""
+            tip += f"\nDelegada{who} em {time.strftime('%d/%m %H:%M', time.localtime(t.delegated_since))}"
         if t.quick and t.quick_since:
             tip += f"\nPra já desde {time.strftime('%d/%m %H:%M', time.localtime(t.quick_since))}"
         if t.done_at:
             tip += f"\nFeita em {time.strftime('%d/%m %H:%M', time.localtime(t.done_at))}"
-        it.setToolTip(tip + "\nDuplo clique: detalhes  ·  !: pra já")
+        it.setToolTip(tip + "\nDuplo clique: detalhes  ·  !: pra já  ·  >: delegada")
         self.addItem(it)
         return t.id
 
@@ -186,6 +192,9 @@ class TaskList(QListWidget):
             return
         if tid and e.text() == "!":
             self.quickRequested.emit(tid)
+            return
+        if tid and e.text() == ">":
+            self.delegateRequested.emit(tid)
             return
         super().keyPressEvent(e)
 

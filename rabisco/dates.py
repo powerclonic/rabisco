@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from .config import C
 
@@ -76,11 +76,21 @@ def _parse_date(tok: str, today: dt.date) -> dt.date | None:
     return None
 
 
-def parse_quick(text: str, now: dt.datetime | None = None):
+class QuickInput(NamedTuple):
+    title: str
+    due: str | None
+    group: str | None
+    quick: bool
+    delegate: str | None  # None = não delegada; "" = delegada sem dizer pra quem
+
+
+def parse_quick(text: str, now: dt.datetime | None = None) -> QuickInput:
     """Lê a digitação rápida.
 
-    '!ligar pro banco #casa @amanhã 14h' -> ('ligar pro banco', '2026-11-25 14:00', 'casa', True)
-    O '!' no começo marca a tarefa como "pra já".
+    '!ligar pro banco #casa @amanhã 14h' -> ('ligar pro banco', '2026-11-25 14:00', 'casa', True, None)
+      !         no começo: "pra já"
+      >Fulano   delegada para Fulano;  > sozinho (no começo ou no fim): delegada sem dizer pra quem
+    Pra já e delegada são excludentes (delegada vence).
     """
     now = now or dt.datetime.now()
     today = now.date()
@@ -89,10 +99,15 @@ def parse_quick(text: str, now: dt.datetime | None = None):
     if quick:
         text = text.lstrip("! ")
     toks = text.split()
-    out, due, group = [], None, None
+    out, due, group, delegate = [], None, None, None
     i = 0
     while i < len(toks):
         tok = toks[i]
+        lone = tok == ">" and i in (0, len(toks) - 1)  # ">" solto só no começo ou no fim
+        if delegate is None and (lone or (tok.startswith(">") and tok[1:2].isalpha())):
+            delegate = tok[1:]
+            i += 1
+            continue
         if group is None and tok.startswith("#") and tok[1:2].isalpha():
             group = tok[1:]
             i += 1
@@ -114,7 +129,9 @@ def parse_quick(text: str, now: dt.datetime | None = None):
                 continue
         out.append(tok)
         i += 1
-    return " ".join(out), due, group, quick
+    if delegate is not None:
+        quick = False
+    return QuickInput(" ".join(out), due, group, quick, delegate)
 
 
 def due_display(due: str | None, done: bool, now: dt.datetime | None = None):
@@ -162,12 +179,15 @@ def due_sort_key(due: str | None):
     return (d or dt.date.max, tm or "24:00")
 
 
-QUICK_WARN_SECS = 4 * 3600     # "pra já" esperando há 4h: amarelo
-QUICK_LATE_SECS = 24 * 3600    # há 1 dia: vermelho (não era tão rápida assim)
+QUICK_WARN_SECS = 4 * 3600         # "pra já" esperando há 4h: amarelo
+QUICK_LATE_SECS = 24 * 3600        # há 1 dia: vermelho (não era tão rápida assim)
+DELEGATE_WARN_SECS = 3 * 86400     # delegada há 3 dias: amarelo (hora de cobrar?)
+DELEGATE_LATE_SECS = 7 * 86400     # há 1 semana: vermelho
 
 
-def age_display(since: float | None, now: dt.datetime | None = None):
-    """Há quanto tempo uma tarefa "pra já" está esperando -> (rótulo, cor)."""
+def age_display(since: float | None, now: dt.datetime | None = None,
+                warn: float = QUICK_WARN_SECS, late: float = QUICK_LATE_SECS):
+    """Há quanto tempo algo está esperando -> (rótulo, cor). Limiares padrão: "pra já"."""
     if not since:
         return "", C["muted"]
     secs = max(0.0, (now or dt.datetime.now()).timestamp() - since)
@@ -180,8 +200,16 @@ def age_display(since: float | None, now: dt.datetime | None = None):
         label = f"há {mins // 60}h"
     else:
         label = f"há {mins // (60 * 24)}d"
-    if secs >= QUICK_LATE_SECS:
+    if secs >= late:
         return label, C["danger"]
-    if secs >= QUICK_WARN_SECS:
+    if secs >= warn:
         return label, C["accent"]
     return label, C["soft"]
+
+
+def delegate_display(to: str, since: float | None, now: dt.datetime | None = None):
+    """'Fulano · há 2d' (ou só 'há 2d') -> (rótulo, cor); cobra depois de 3 e 7 dias."""
+    age, color = age_display(since, now, DELEGATE_WARN_SECS, DELEGATE_LATE_SECS)
+    if not age:
+        return to or "delegada", C["soft"]
+    return (f"{to} · {age}" if to else age), color

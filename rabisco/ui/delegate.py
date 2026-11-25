@@ -8,12 +8,12 @@ from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen, QTextLayout, QTextOption
 from PySide6.QtWidgets import QLineEdit, QListWidget, QStyle, QStyledItemDelegate
 
-from ..config import C, G_BOLT, G_CAL, G_CHEVRON_DOWN, G_CHEVRON_RIGHT
-from ..dates import age_display, due_display
+from ..config import C, G_BOLT, G_CAL, G_CHEVRON_DOWN, G_CHEVRON_RIGHT, G_DELEGATE
+from ..dates import age_display, delegate_display, due_display
 from ..sections import SECTION_BY_KEY
 from .roles import (
-    ROLE_COLLAPSED, ROLE_COUNT, ROLE_DUE, ROLE_GCOLOR, ROLE_GNAME, ROLE_ID, ROLE_KIND, ROLE_NOTES,
-    ROLE_QUICK_SINCE, ROLE_SECTION, ROLE_STATUS,
+    ROLE_COLLAPSED, ROLE_COUNT, ROLE_DELEG_SINCE, ROLE_DELEG_TO, ROLE_DUE, ROLE_GCOLOR, ROLE_GNAME,
+    ROLE_ID, ROLE_KIND, ROLE_NOTES, ROLE_QUICK_SINCE, ROLE_SECTION, ROLE_STATUS,
 )
 from .theme import icon_font, small_font
 
@@ -69,6 +69,8 @@ class CardDelegate(QStyledItemDelegate):
         gname = index.data(ROLE_GNAME) or ""
         done = index.data(ROLE_STATUS) == "done"
         quick_since = 0.0 if done else float(index.data(ROLE_QUICK_SINCE) or 0)
+        deleg_since = float(index.data(ROLE_DELEG_SINCE) or 0)
+        deleg_to = index.data(ROLE_DELEG_TO) or ""
         tw = self._text_width(width)
         layout, th = build_text_layout(title, font, tw)
         lh = QFontMetricsF(font).height()
@@ -86,12 +88,12 @@ class CardDelegate(QStyledItemDelegate):
         if notes:
             notes_y = y + 2
             y = notes_y + sh
-        if due or gname or quick_since:
+        if due or gname or quick_since or deleg_since:
             meta_y = y + 4
             y = meta_y + sh
         return SimpleNamespace(layout=layout, text_dy=text_dy, check_dy=check_dy, content=y,
                                tw=tw, notes=notes, notes_y=notes_y, due=due, gname=gname,
-                               quick_since=quick_since,
+                               quick_since=quick_since, deleg_since=deleg_since, deleg_to=deleg_to,
                                gcolor=index.data(ROLE_GCOLOR) or C["muted"], meta_y=meta_y, sf=sf)
 
     def _check_rect(self, card: QRectF, check_dy: float) -> QRectF:
@@ -180,6 +182,9 @@ class CardDelegate(QStyledItemDelegate):
 
             if quick:
                 chip(G_BOLT, *age_display(info.quick_since))
+            if info.deleg_since:
+                label, color = delegate_display(info.deleg_to, info.deleg_since)
+                chip(G_DELEGATE, label, C["muted"] if done else color)
             if info.due:
                 chip(G_CAL, *due_display(info.due, done))
             if info.gname:

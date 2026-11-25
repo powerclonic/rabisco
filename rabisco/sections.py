@@ -2,6 +2,7 @@
 
 Cada tarefa cai na primeira seção cuja regra ela satisfaz, nesta ordem:
   quick  — marcada como "pra já" (e não concluída)
+  delegated — delegada para alguém (aparece mais embaixo: não está no seu prato)
   doing  — em andamento
   due    — prazo hoje ou vencido
   soon   — prazo nos próximos dias
@@ -14,7 +15,7 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .config import G_BOLT, G_CAL, G_CHECK, G_CLOCK, G_LIST, G_PLAY
+from .config import G_BOLT, G_CAL, G_CHECK, G_CLOCK, G_DELEGATE, G_LIST, G_PLAY
 from .dates import due_sort_key, is_due_today_or_late
 
 if TYPE_CHECKING:
@@ -36,6 +37,7 @@ SECTIONS = [
     SectionInfo("due", "Hoje e atrasadas", G_CLOCK, "danger", True),
     SectionInfo("soon", "Próximos dias", G_CAL, "soft", True),
     SectionInfo("nodue", "Sem prazo", G_LIST, "muted", False),
+    SectionInfo("delegated", "Delegadas", G_DELEGATE, "delegated", False),
     SectionInfo("done", "Feitas", G_CHECK, "done", False),
 ]
 SECTION_BY_KEY = {s.key: s for s in SECTIONS}
@@ -46,6 +48,8 @@ def section_of(t: "Task", now: dt.datetime | None = None) -> str:
         return "done"
     if t.quick:
         return "quick"
+    if t.delegated:
+        return "delegated"
     if t.status == "doing":
         return "doing"
     if t.due:
@@ -71,5 +75,9 @@ def build_sections(tasks: list["Task"], hide_done: bool = False,
 
 
 def quick_first(tasks: list["Task"]) -> list["Task"]:
-    """Ordenação estável que sobe as "pra já" (usada no quadro e na lista manual)."""
-    return sorted(tasks, key=lambda t: not (t.quick and t.status != "done"))
+    """Ordenação estável: "pra já" em cima, delegadas embaixo (quadro e lista manual)."""
+    def rank(t: "Task") -> int:
+        if t.status == "done":
+            return 1
+        return 0 if t.quick else 2 if t.delegated else 1
+    return sorted(tasks, key=rank)

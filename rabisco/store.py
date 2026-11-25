@@ -27,6 +27,9 @@ class Task:
     group: str | None = None        # id do grupo (opcional)
     quick: bool = False             # "pra já": rápida, fazer o quanto antes
     quick_since: float | None = None  # desde quando está marcada como pra já
+    delegated: bool = False         # delegada: está com outra pessoa
+    delegated_to: str = ""          # pra quem (opcional)
+    delegated_since: float | None = None
 
 
 @dataclass
@@ -86,6 +89,11 @@ class Store(QObject):
                 t.notes = t.notes or ""
                 t.quick = bool(t.quick)
                 t.quick_since = (t.quick_since or t.created) if t.quick else None
+                t.delegated = bool(t.delegated)
+                t.delegated_to = " ".join(str(t.delegated_to or "").split()) if t.delegated else ""
+                t.delegated_since = (t.delegated_since or t.created) if t.delegated else None
+                if t.delegated:
+                    t.quick, t.quick_since = False, None
                 self.tasks.append(t)
         s = raw.get("settings", {})
         if isinstance(s, dict):
@@ -157,12 +165,16 @@ class Store(QObject):
         self.tasks.insert(idx, t)
 
     def add(self, text: str, status: str = "todo", group: str | None = None,
-            due: str | None = None, quick: bool = False) -> Task | None:
+            due: str | None = None, quick: bool = False, delegate: str | None = None) -> Task | None:
+        """`delegate`: None = não delegada; "" = delegada sem nome; "Fulano" = delegada pra Fulano."""
         text = " ".join(text.split())
         if not text:
             return None
-        t = Task(text=text, status=status, group=group if self.get_group(group) else None, due=due,
-                 quick=quick, quick_since=time.time() if quick else None)
+        t = Task(text=text, status=status, group=group if self.get_group(group) else None, due=due)
+        if delegate is not None:
+            self._delegate_fields(t, True, delegate)
+        elif quick:
+            self._quick_fields(t, True)
         self._insert_first_of_group(t)
         self._touch()
         return t
@@ -181,6 +193,8 @@ class Store(QObject):
                 v = (v or "").rstrip()
             elif k == "group" and not self.get_group(v):
                 v = None
+            elif k == "delegated_to":
+                v = " ".join((v or "").split())
             if getattr(t, k) != v:
                 setattr(t, k, v)
                 changed = True
@@ -199,13 +213,35 @@ class Store(QObject):
         self._insert_first_of_group(t)
         self._touch()
 
+    # pra já e delegada são excludentes: marcar uma desmarca a outra
+    @staticmethod
+    def _quick_fields(t: Task, on: bool) -> None:
+        if on and not t.quick:
+            t.quick_since = time.time()
+        t.quick = on
+        if not on:
+            t.quick_since = None
+        if on:
+            Store._delegate_fields(t, False)
+
+    @staticmethod
+    def _delegate_fields(t: Task, on: bool, to: str | None = None) -> None:
+        if on and not t.delegated:
+            t.delegated_since = time.time()
+        t.delegated = on
+        if to is not None:
+            t.delegated_to = " ".join(to.split())
+        if not on:
+            t.delegated_to, t.delegated_since = "", None
+        else:
+            t.quick, t.quick_since = False, None
+
     def set_quick(self, tid: str, on: bool) -> None:
         """Marca/desmarca como "pra já". Ao marcar, sobe para o topo da sua coluna."""
         t = self.get(tid)
         if not t or t.quick == on:
             return
-        t.quick = on
-        t.quick_since = time.time() if on else None
+        self._quick_fields(t, on)
         if on:
             self.tasks.remove(t)
             if t.status == "done":
@@ -218,23 +254,50 @@ class Store(QObject):
         if t:
             self.set_quick(tid, not t.quick)
 
+    def set_delegated(self, tid: str, on: bool, to: str | None = None) -> None:
+        """Marca/desmarca como delegada. `to` None mantém o nome que já existia."""
+        t = self.get(tid)
+        if not t:
+            return
+        before = (t.delegated, t.delegated_to)
+        self._delegate_fields(t, on, to)
+        if on and t.status == "done":
+            self._apply_status(t, "todo")
+        if (t.delegated, t.delegated_to) != before:
+            self._touch()
+
+    def toggle_delegated(self, tid: str) -> None:
+        t = self.get(tid)
+        if t:
+            self.set_delegated(tid, not t.delegated)
+
+    def delegate_names(self) -> list[str]:
+        """Pessoas para quem você já delegou (para autocompletar)."""
+        names = {t.delegated_to for t in self.tasks if t.delegated_to}
+        return sorted(names, key=str.casefold)
+
     def drop_into_section(self, tid: str, section: str, before_id: str | None) -> None:
         """Arrastar para uma seção da lista agrupada ajusta o que define a seção e reposiciona."""
         t = self.get(tid)
         if not t:
             return
         if section == "quick":
-            if not t.quick:
-                t.quick, t.quick_since = True, time.time()
+            self._quick_fields(t, True)
+            if t.status == "done":
+                self._apply_status(t, "todo")
+        elif section == "delegated":
+            self._delegate_fields(t, True)
             if t.status == "done":
                 self._apply_status(t, "todo")
         elif section == "doing":
-            t.quick, t.quick_since = False, None
+            self._quick_fields(t, False)
+            self._delegate_fields(t, False)
             self._apply_status(t, "doing")
         elif section == "done":
             self._apply_status(t, "done")
         else:  # due / soon / nodue: é o prazo que decide onde ela aparece
-            t.quick, t.quick_since = False, None
+            self._quick_fields(t, False)
+            self._delegate_fields(t, False)
             if t.status != "todo":
                 self._apply_status(t, "todo")
         if before_id == tid:  # soltou no mesmo lugar: só os atributos mudaram
