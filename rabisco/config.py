@@ -60,6 +60,7 @@ DEFAULT_SETTINGS = {
     "sort": "smart",       # smart (seções) | manual (lista plana)
     "collapsed": ["done"], # seções recolhidas na lista
     "hotkey": "Ctrl+Alt+K",
+    "reminders": True,     # notificação quando chega a hora do prazo
 }
 
 # Glifos da fonte Segoe Fluent Icons (Win11) / Segoe MDL2 Assets (Win10)
@@ -69,8 +70,9 @@ G_BACK, G_DELETE, G_CAL, G_EXPAND = "\uE72B", "\uE74D", "\uE787", "\uE70F"
 G_BOLT, G_PLAY, G_CLOCK, G_LIST, G_CHECK = "\uE945", "\uE768", "\uE823", "\uE8FD", "\uE73E"
 G_CHEVRON_DOWN, G_CHEVRON_RIGHT = "\uE70D", "\uE76C"
 G_DELEGATE = "\uE72D"  # Share
+G_SEARCH = "\uE721"
 
-INPUT_HELP = ("Enter: adiciona  ·  Shift+Enter: em Fazendo  ·  Ctrl+Enter: abre detalhes\n"
+INPUT_HELP = ("Enter: adiciona  ·  Shift+Enter: em Fazendo  ·  Ctrl+Enter: abre detalhes  ·  F1: atalhos\n"
               "!  no começo: pra já (rápida, fazer o quanto antes)\n"
               ">Fulano  delegada pra Fulano   ·   >  sozinho no começo/fim: delegada sem dizer pra quem\n"
               "#grupo  coloca num grupo (cria se não existir)\n"

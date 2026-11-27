@@ -85,6 +85,17 @@ def stylesheet() -> str:
         padding:8px 6px 8px 10px; selection-background-color:{C['accent']}; selection-color:{C['bg']};
     }}
     QLineEdit#input:focus {{ border-color:{C['accent']}; }}
+    QLineEdit#search {{
+        background:{C['surface']}; border:1px solid {C['border']}; border-radius:8px;
+        padding:5px 6px; selection-background-color:{C['accent']}; selection-color:{C['bg']};
+    }}
+    QLineEdit#search:focus {{ border-color:{C['soft']}; }}
+    QFrame#noteBar {{ background:{C['surface']}; border:1px solid {C['done']}; border-radius:8px; }}
+    QLabel#noteTitle {{ color:{C['done']}; font-size:9pt; }}
+    QLineEdit#noteEdit {{
+        background:transparent; border:none; padding:2px 0;
+        selection-background-color:{C['accent']}; selection-color:{C['bg']};
+    }}
     QLineEdit#cardEditor {{
         background:{C['card_hover']}; border:1px solid {C['accent']}; border-radius:8px;
         padding:0 10px; selection-background-color:{C['accent']}; selection-color:{C['bg']};
@@ -145,6 +156,18 @@ def stylesheet() -> str:
         background:transparent; border:none; color:{C['muted']}; padding:2px 5px; font-size:8.5pt;
     }}
     QPushButton#link:hover {{ color:{C['accent']}; }}
+    QPushButton#undo {{
+        background:{C['card']}; border:none; border-radius:10px; color:{C['text']};
+        padding:2px 10px; font-size:8.5pt;
+    }}
+    QPushButton#undo:hover {{ background:{C['card_hover']}; color:{C['accent']}; }}
+    QFrame#overlay {{ background:{C['bg']}; border-radius:8px; }}
+    QLabel#overlaySection {{ color:{C['accent']}; font-weight:600; padding-top:8px; }}
+    QLabel#kbd {{
+        background:{C['card']}; border:1px solid {C['border']}; border-radius:5px;
+        padding:1px 6px; font-size:9pt;
+    }}
+    QLabel#soft {{ color:{C['soft']}; }}
     QWidget#chipRow {{ background:transparent; }}
     QPushButton#chip {{
         background:{C['surface']}; border:1px solid transparent; border-radius:11px;

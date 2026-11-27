@@ -46,6 +46,7 @@ class CardDelegate(QStyledItemDelegate):
     """Desenha cada tarefa como um cartão: título, 1ª linha da descrição e linha de prazo/grupo."""
 
     toggled = Signal(str)
+    noteToggled = Signal(str)  # Shift+clique no círculo: concluir com comentário
     headerToggled = Signal(str)
 
     MX, MY = 4, 3        # margem externa do cartão
@@ -56,6 +57,8 @@ class CardDelegate(QStyledItemDelegate):
         super().__init__(view)
         self.view = view
         self.show_check = show_check
+        self.checking: set[str] = set()  # ids sendo concluídos (desenha como feitos antes de mover)
+        self._cache: dict[tuple, SimpleNamespace] = {}
 
     def _text_width(self, total: int) -> float:
         w = total - 2 * self.MX - 2 * self.PX
@@ -63,14 +66,20 @@ class CardDelegate(QStyledItemDelegate):
         return max(40.0, float(w))
 
     def _info(self, font: QFont, index, width: int):
+        """Geometria do cartão. Cacheada: sizeHint, paint e cliques pedem isso o tempo todo."""
         title = index.data() or ""
         notes = (index.data(ROLE_NOTES) or "").strip()
         due = index.data(ROLE_DUE) or ""
         gname = index.data(ROLE_GNAME) or ""
+        gcolor = index.data(ROLE_GCOLOR) or C["muted"]
         done = index.data(ROLE_STATUS) == "done"
         quick_since = 0.0 if done else float(index.data(ROLE_QUICK_SINCE) or 0)
         deleg_since = float(index.data(ROLE_DELEG_SINCE) or 0)
         deleg_to = index.data(ROLE_DELEG_TO) or ""
+        key = (font.key(), width, title, notes, due, gname, gcolor, quick_since, deleg_since, deleg_to)
+        hit = self._cache.get(key)
+        if hit is not None:
+            return hit
         tw = self._text_width(width)
         layout, th = build_text_layout(title, font, tw)
         lh = QFontMetricsF(font).height()
@@ -91,10 +100,14 @@ class CardDelegate(QStyledItemDelegate):
         if due or gname or quick_since or deleg_since:
             meta_y = y + 4
             y = meta_y + sh
-        return SimpleNamespace(layout=layout, text_dy=text_dy, check_dy=check_dy, content=y,
+        info = SimpleNamespace(layout=layout, text_dy=text_dy, check_dy=check_dy, content=y,
                                tw=tw, notes=notes, notes_y=notes_y, due=due, gname=gname,
                                quick_since=quick_since, deleg_since=deleg_since, deleg_to=deleg_to,
-                               gcolor=index.data(ROLE_GCOLOR) or C["muted"], meta_y=meta_y, sf=sf)
+                               gcolor=gcolor, meta_y=meta_y, sf=sf)
+        if len(self._cache) > 3000:
+            self._cache.clear()
+        self._cache[key] = info
+        return info
 
     def _check_rect(self, card: QRectF, check_dy: float) -> QRectF:
         return QRectF(card.left() + self.PX, card.top() + self.PY + check_dy, self.CHECK, self.CHECK)
@@ -119,6 +132,8 @@ class CardDelegate(QStyledItemDelegate):
             self._paint_header(p, option, index)
             return
         status = index.data(ROLE_STATUS) or "todo"
+        if index.data(ROLE_ID) in self.checking:
+            status = "done"
         done = status == "done"
         hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
@@ -273,7 +288,8 @@ class CardDelegate(QStyledItemDelegate):
             if self.hits_check(option.rect, index, event.position()):
                 if (event.type() == QEvent.Type.MouseButtonRelease
                         and event.button() == Qt.MouseButton.LeftButton):
-                    self.toggled.emit(index.data(ROLE_ID))
+                    shift = event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+                    (self.noteToggled if shift else self.toggled).emit(index.data(ROLE_ID))
                 return True  # não seleciona / não arrasta / não abre detalhes
         return super().editorEvent(event, model, option, index)
 

@@ -12,17 +12,17 @@ from PySide6.QtWidgets import (
 )
 
 from ..config import (
-    APP_NAME, BOARD_WIDTH, C, DATA_DIR, EDGE, G_CLOSE, G_EXPAND, G_MORE, G_PIN, G_PINNED,
+    APP_NAME, BOARD_WIDTH, C, DATA_DIR, EDGE, G_CLOSE, G_EXPAND, G_MORE, G_PIN, G_PINNED, G_SEARCH,
     GROUP_COLORS, INPUT_HELP, IS_WIN, LIST_WIDTH, MAX_HEIGHT, SLIDE, STATUS_LABEL, STATUSES,
 )
-from ..dates import is_overdue, make_due, parse_quick, split_due
+from ..dates import due_display, is_overdue, make_due, next_weekday, parse_quick, split_due
 from ..sections import build_sections, quick_first
 from ..store import Group, Store, Task
 from ..winapi import get_autostart, set_autostart
 from .details import DetailPage
 from .tasklist import TaskList
 from .theme import dot_icon, glyph_icon
-from .widgets import Column, GroupBar
+from .widgets import Column, GroupBar, ShortcutsOverlay
 
 if IS_WIN:
     from ..winapi import user32, win_set_topmost, win_style_window
@@ -43,6 +43,10 @@ class Panel(QWidget):
         self._autohidden_at = 0.0
         self._styled_hwnd = None
         self.hotkey_ok = False
+        self._searching = False
+        self._note_tid: str | None = None
+        self._note_back: TaskList | None = None
+        self._reminder_tid: str | None = None
 
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(True)
@@ -54,9 +58,9 @@ class Panel(QWidget):
         self._undo_timer.setSingleShot(True)
         self._undo_timer.setInterval(6000)
 
-        # repinta de minuto em minuto: "Hoje" / atrasada mudam com o relógio
+        # a cada 30 s: lembretes de prazo e repintura ("Hoje" / atrasada mudam com o relógio)
         self._clock = QTimer(self)
-        self._clock.setInterval(60_000)
+        self._clock.setInterval(30_000)
         self._clock.timeout.connect(self._tick)
         self._clock.start()
 
@@ -64,10 +68,11 @@ class Panel(QWidget):
         self._build_menu()
         self._build_tray()
         self._build_shortcuts()
-        self._undo_timer.timeout.connect(lambda: self.undo_btn.hide())
+        self._undo_timer.timeout.connect(self._hide_undo)
 
         self.refresh()
         self.set_view(store.settings["view"], animate=False)
+        QTimer.singleShot(2000, self._check_reminders)
 
     # construção
     @staticmethod
@@ -129,13 +134,39 @@ class Panel(QWidget):
 
         # entrada rápida
         self.input = self._named(QLineEdit(), "input")
-        self.input.setPlaceholderText("Anotar algo…  (Enter)")
+        self.input.setPlaceholderText("Anotar algo…   (F1: atalhos)")
         self.input.setToolTip(INPUT_HELP)
         self.input.returnPressed.connect(self._add_from_input)
+        self.input.installEventFilter(self)
         act = self.input.addAction(glyph_icon(G_EXPAND, C["muted"]), QLineEdit.ActionPosition.TrailingPosition)
         act.setToolTip("Adicionar com detalhes (Ctrl+Enter)")
         act.triggered.connect(lambda *_: self._add_from_input(details=True))
         lay.addWidget(self.input)
+
+        # busca (Ctrl+F)
+        self.search = self._named(QLineEdit(), "search")
+        self.search.setPlaceholderText("Buscar…   (Esc fecha)")
+        self.search.addAction(glyph_icon(G_SEARCH, C["muted"]), QLineEdit.ActionPosition.LeadingPosition)
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(lambda *_: self._refresh_timer.start())
+        self.search.installEventFilter(self)
+        self.search.hide()
+        lay.addWidget(self.search)
+
+        # comentário ao concluir (Shift+Espaço / Shift+clique no círculo)
+        self.note_bar = self._named(QFrame(), "noteBar")
+        nl = QVBoxLayout(self.note_bar)
+        nl.setContentsMargins(10, 7, 10, 8)
+        nl.setSpacing(5)
+        self.note_title = self._named(QLabel(), "noteTitle")
+        self.note_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.note_edit = self._named(QLineEdit(), "noteEdit")
+        self.note_edit.setPlaceholderText("Como ficou?   (Enter salva · Esc pula)")
+        self.note_edit.returnPressed.connect(self._save_note)
+        nl.addWidget(self.note_title)
+        nl.addWidget(self.note_edit)
+        self.note_bar.hide()
+        lay.addWidget(self.note_bar)
 
         # grupos (só aparece se existir algum)
         self.groupbar = GroupBar()
@@ -176,7 +207,8 @@ class Panel(QWidget):
         self.counter = self._named(QLabel(), "hint")
         self.counter.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         foot.addWidget(self.counter, 1)
-        self.undo_btn = self._named(QPushButton("Desfazer"), "link")
+        self.undo_btn = self._named(QPushButton("Desfazer"), "undo")
+        self.undo_btn.setToolTip("Desfazer (Ctrl+Z)")
         self.undo_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.undo_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.undo_btn.clicked.connect(self.undo)
@@ -189,6 +221,8 @@ class Panel(QWidget):
         foot.addWidget(self.clear_btn)
         lay.addLayout(foot)
 
+        self.help = ShortcutsOverlay(card)
+
         self.btn_pin.blockSignals(True)
         self.btn_pin.setChecked(bool(self.store.settings["pinned"]))
         self.btn_pin.setText(G_PINNED if self.store.settings["pinned"] else G_PIN)
@@ -196,7 +230,13 @@ class Panel(QWidget):
 
     def _wire(self, lst: TaskList):
         lst.dropped.connect(self._on_drop)
-        lst.toggleRequested.connect(self.store.toggle_done)
+        lst.toggleRequested.connect(self.toggle_done)
+        lst.typed.connect(self._type_into_input)
+        lst.leaveTop.connect(self._leave_list)
+        lst.neighborRequested.connect(lambda d, lst=lst: self._focus_neighbor(lst, d))
+        lst.statusStep.connect(self._step_status)
+        lst.noteRequested.connect(lambda tid, lst=lst: self.open_note(tid, lst))
+        lst.postponeRequested.connect(self.postpone)
         lst.quickRequested.connect(self.store.toggle_quick)
         lst.delegateRequested.connect(self.store.toggle_delegated)
         lst.headerToggled.connect(self.store.toggle_collapsed)
@@ -221,6 +261,9 @@ class Panel(QWidget):
         self.act_autohide = m.addAction("Esconder ao perder o foco")
         self.act_autohide.setCheckable(True)
         self.act_autohide.toggled.connect(lambda on: self.store.set_setting("autohide", on))
+        self.act_remind = m.addAction("Avisar na hora do prazo")
+        self.act_remind.setCheckable(True)
+        self.act_remind.toggled.connect(lambda on: self.store.set_setting("reminders", on))
         self.act_hide_done = m.addAction("Ocultar feitas na lista")
         self.act_hide_done.setCheckable(True)
         self.act_hide_done.toggled.connect(self._set_hide_done)
@@ -245,8 +288,10 @@ class Panel(QWidget):
             self.act_autostart.setCheckable(True)
             self.act_autostart.toggled.connect(set_autostart)
         m.addSeparator()
+        m.addAction("Buscar…\tCtrl+F", self.open_search)
         m.addAction("Novo grupo…", self._new_group_and_select)
-        self.act_undo = m.addAction("Desfazer exclusão", self.undo)
+        self.act_undo = m.addAction("Desfazer\tCtrl+Z", self.undo)
+        m.addAction("Atalhos de teclado\tF1", self.show_help)
         m.addAction("Abrir pasta de dados", self._open_data_dir)
         self.act_help = m.addAction("")
         self.act_help.setEnabled(False)
@@ -257,6 +302,7 @@ class Panel(QWidget):
     def _sync_menu(self):
         s = self.store.settings
         for act, val in ((self.act_pin, s["pinned"]), (self.act_autohide, s["autohide"]),
+                         (self.act_remind, s["reminders"]),
                          (self.act_hide_done, s["hide_done"]),
                          (self.act_smart, s["sort"] == "smart")):
             act.blockSignals(True)
@@ -286,6 +332,7 @@ class Panel(QWidget):
         self.tray = QSystemTrayIcon(self.icon, self)
         self.tray.setContextMenu(self.menu)
         self.tray.activated.connect(self._on_tray)
+        self.tray.messageClicked.connect(self._on_reminder_clicked)
         self.tray.show()
 
     def _on_tray(self, reason):
@@ -298,10 +345,19 @@ class Panel(QWidget):
             shortcut.activated.connect(fn)
         sc("Ctrl+1", lambda: self.set_view("list"))
         sc("Ctrl+2", lambda: self.set_view("board"))
+        sc("Ctrl+Tab", lambda: self.set_view("board" if self.store.settings["view"] == "list" else "list"))
         sc("Ctrl+N", self._focus_input)
         sc("Ctrl+L", self._focus_input)
         sc("Ctrl+Z", self.undo)
+        sc("Ctrl+H", lambda: self._set_hide_done(not self.store.settings["hide_done"]))
+        sc("Ctrl+F", self.open_search)
+        sc("Ctrl+Return", self._ctrl_enter)
+        sc("Ctrl+Enter", self._ctrl_enter)
+        sc("F1", self.show_help)
         sc("Ctrl+Q", self.quit_app)
+        sc("Alt+0", lambda: self.set_filter("all"))
+        for n in range(1, 10):
+            sc(f"Alt+{n}", lambda n=n: self._filter_nth(n))
 
     def set_hotkey_status(self, ok: bool):
         self.hotkey_ok = ok
@@ -313,21 +369,25 @@ class Panel(QWidget):
     def refresh(self):
         s = self.store
         vis = s.visible()
+        query = self._query()
+        shown = s.search(vis, query) if query else vis
         if not self.details_open():  # só reconstrói a página que está na tela
             groups = {g.id: g for g in s.groups}
             show_group = s.settings["filter"] == "all"
             if self.stack.currentIndex() == 0:
+                self.list_view.empty_text = ("Nada encontrado." if query
+                                             else "Tudo limpo por aqui.\nDigite acima e tecle Enter.")
                 if s.settings["sort"] == "smart":
                     self.list_view.set_tasks([], groups, show_group,
-                                             sections=build_sections(vis, s.settings["hide_done"]),
-                                             collapsed=s.settings["collapsed"])
+                                             sections=build_sections(shown, s.settings["hide_done"]),
+                                             collapsed=[] if query else s.settings["collapsed"])
                 else:
-                    pending = quick_first([t for t in vis if t.status != "done"])
-                    done = [] if s.settings["hide_done"] else [t for t in vis if t.status == "done"]
+                    pending = quick_first([t for t in shown if t.status != "done"])
+                    done = [] if s.settings["hide_done"] else [t for t in shown if t.status == "done"]
                     self.list_view.set_tasks(pending + done, groups, show_group)
             else:
                 for st, col in self.columns.items():
-                    col.set_tasks(quick_first([t for t in vis if t.status == st]), groups, show_group)
+                    col.set_tasks(quick_first([t for t in shown if t.status == st]), groups, show_group)
 
         counts = {"all": sum(t.status != "done" for t in s.tasks)}
         for t in s.tasks:
@@ -336,8 +396,13 @@ class Panel(QWidget):
         self.groupbar.set_groups(s.groups, s.settings["filter"], counts)
         self.groupbar.setVisible(bool(s.groups) and not self.details_open())
 
-        self._update_counter(vis)
-        self.clear_btn.setVisible(any(t.status == "done" for t in vis) and not self.details_open())
+        if query:
+            n = len(shown)
+            self.counter.setText(f"{n} resultado{'s' if n != 1 else ''}")
+        else:
+            self._update_counter(vis)
+        self.clear_btn.setVisible(any(t.status == "done" for t in vis) and not self.details_open()
+                                  and self.undo_btn.isHidden())
 
         if self.details_open():
             if s.get(self.details.tid) is None:
@@ -362,17 +427,216 @@ class Panel(QWidget):
         self.counter.setText(txt)
 
     def _tick(self):
+        self._check_reminders()
         if self.isVisible():  # só repinta: não atrapalha uma edição em andamento
-            self._update_counter(self.store.visible())
+            if not self._query():
+                self._update_counter(self.store.visible())
             for lst in (self.list_view, *(c.list for c in self.columns.values())):
                 lst.viewport().update()
 
     # ações
-    def _focus_input(self):
+    def _focus_input(self, select: bool = True):
         if self.details_open():
             self.close_details()
         self.input.setFocus()
-        self.input.selectAll()
+        if select:
+            self.input.selectAll()
+        else:
+            self.input.end(False)
+
+    def _type_into_input(self, text: str):
+        """Digitar com a lista em foco: o texto vai pro campo (ou pra busca, se estiver aberta)."""
+        target = self.search if self._searching else self.input
+        if not target.isVisible():
+            return
+        target.setFocus()
+        target.end(False)
+        target.insert(text)
+
+    def _leave_list(self):
+        if self._searching and self.search.isVisible():
+            self.search.setFocus()
+            self.search.end(False)
+        elif self.input.isVisible():
+            self._focus_input(select=False)
+
+    # busca
+    def _query(self) -> str:
+        return self.search.text().strip() if self._searching else ""
+
+    def open_search(self):
+        if not self.isVisible():
+            self.show_panel()
+        if self.details_open():
+            self.close_details()
+        self._searching = True
+        self.search.show()
+        self.search.setFocus()
+        self.search.selectAll()
+        self.refresh()
+
+    def close_search(self):
+        self._searching = False
+        self.search.blockSignals(True)
+        self.search.clear()
+        self.search.blockSignals(False)
+        self.search.hide()
+        self.refresh()
+        self._focus_input()
+
+    # comentário ao concluir
+    def open_note(self, tid: str, back: TaskList | None = None):
+        t = self.store.get(tid)
+        if not t:
+            return
+        if self.details_open():
+            self.close_details()
+        self._note_tid, self._note_back = tid, back
+        fm = self.note_title.fontMetrics()
+        self.note_title.setText(fm.elidedText(f"✓  {t.text}", Qt.TextElideMode.ElideRight,
+                                              max(80, self.width() - 60)))
+        self.note_title.setToolTip(t.text)
+        self.note_edit.clear()
+        self.input.hide()
+        self.note_bar.show()
+        self.note_edit.setFocus()
+
+    def _save_note(self):
+        if self._note_tid:
+            self.store.add_note(self._note_tid, self.note_edit.text())
+        self.close_note()
+
+    def close_note(self):
+        if not self.note_bar.isVisible():
+            return
+        back = self._note_back
+        self._note_tid = self._note_back = None
+        self.note_bar.hide()
+        if not self.details_open():
+            self.input.show()
+            if back is not None and back.isVisible() and back.has_tasks():
+                back.setFocus()
+            else:
+                self.input.setFocus()
+
+    # prazos
+    def postpone(self, tid: str, days: int):
+        """Ctrl+→ / Ctrl+←: prazo +1 / -1 dia, e a seleção acompanha a tarefa."""
+        self.store.postpone(tid, days)
+        self._follow(tid)
+
+    def _set_due_date(self, tid: str, d: dt.date):
+        t = self.store.get(tid)
+        if t:
+            self.store.update_task(tid, due=make_due(d, split_due(t.due)[1]))
+
+    def _follow(self, tid: str):
+        """Reconstrói já e mantém o foco/seleção na tarefa (que pode ter mudado de seção/coluna)."""
+        self._refresh_timer.stop()
+        self.refresh()
+        t = self.store.get(tid)
+        if not t or self.details_open():
+            return
+        lst = self.columns[t.status].list if self.store.settings["view"] == "board" else self.list_view
+        if lst.select_id(tid):
+            lst.setFocus()
+
+    def _check_reminders(self):
+        if not self.store.settings["reminders"] or not self.tray:
+            return
+        hits = self.store.due_reminders()
+        if not hits:
+            return
+        if len(hits) == 1:
+            t = hits[0]
+            self._reminder_tid = t.id
+            title, body = t.text, f"Prazo: {due_display(t.due, False)[0]}"
+        else:
+            self._reminder_tid = None
+            title = f"{len(hits)} prazos chegaram"
+            body = "\n".join(f"• {t.text}" for t in hits[:5]) + ("\n…" if len(hits) > 5 else "")
+        self.tray.showMessage(title, body, self.icon, 15_000)
+
+    def _on_reminder_clicked(self):
+        tid, self._reminder_tid = self._reminder_tid, None
+        self.show_panel()
+        if tid and self.store.get(tid):
+            self.open_details(tid)
+
+    def _lists(self) -> list[TaskList]:
+        if self.store.settings["view"] == "list":
+            return [self.list_view]
+        return [c.list for c in self.columns.values()]
+
+    def _active_list(self) -> TaskList:
+        lists = self._lists()
+        return (next((lst for lst in lists if lst.current_id()), None)
+                or next((lst for lst in lists if lst.has_tasks()), lists[0]))
+
+    def _focus_list(self):
+        lst = self._active_list()
+        if lst.has_tasks():
+            lst.setFocus()
+
+    def _focus_neighbor(self, lst: TaskList, d: int):
+        cols = [c.list for c in self.columns.values()]
+        if lst not in cols:
+            return
+        i = cols.index(lst) + d
+        while 0 <= i < len(cols):  # pula colunas vazias
+            if cols[i].has_tasks():
+                row = max(0, lst.currentRow())
+                cols[i].setFocus()
+                cols[i].select_near(row)
+                return
+            i += d
+
+    def _ctrl_enter(self):
+        if self.help.isVisible():
+            self.help.close_overlay()
+        if self.details_open():
+            self.close_details()
+        elif self.input.hasFocus():
+            self._add_from_input(details=True)
+        else:
+            tid = next((lst.current_id() for lst in self._lists() if lst.hasFocus()), None)
+            if tid:
+                self.open_details(tid)
+
+    def _filter_nth(self, n: int):
+        if 0 < n <= len(self.store.groups):
+            gid = self.store.groups[n - 1].id
+            self.set_filter("all" if self.store.settings["filter"] == gid else gid)
+
+    def show_help(self):
+        if not self.isVisible():
+            self.show_panel()
+        if self.help.isVisible():
+            self.help.close_overlay()
+        else:
+            self.help.open()
+
+    def toggle_done(self, tid: str):
+        t = self.store.get(tid)
+        if not t:
+            return
+        self.store.toggle_done(tid)
+        if t.status == "done":
+            self._offer_undo("Concluída")
+
+    def _step_status(self, tid: str, d: int):
+        """Alt+setas: A fazer <-> Fazendo <-> Feito, e a seleção vai junto."""
+        t = self.store.get(tid)
+        if not t:
+            return
+        i = STATUSES.index(t.status) + d
+        if not 0 <= i < len(STATUSES):
+            return
+        new = STATUSES[i]
+        self.store.set_status(tid, new)
+        if new == "done":
+            self._offer_undo("Concluída")
+        self._follow(tid)
 
     def _add_from_input(self, details: bool = False):
         mods = QApplication.keyboardModifiers()
@@ -397,20 +661,28 @@ class Panel(QWidget):
 
     def delete_task(self, tid: str):
         if self.store.delete(tid):
-            self._offer_undo()
+            self._offer_undo("Excluída")
 
     def clear_done(self):
         f = self.store.settings["filter"]
-        if self.store.clear_done(None if f == "all" else f):
-            self._offer_undo()
+        n = self.store.clear_done(None if f == "all" else f)
+        if n:
+            self._offer_undo(f"{n} feita{'s' if n != 1 else ''} removida{'s' if n != 1 else ''}")
 
-    def _offer_undo(self):
+    def _offer_undo(self, what: str = ""):
+        self.undo_btn.setText(f"{what}  ·  Desfazer" if what else "Desfazer")
         self.undo_btn.show()
+        self.clear_btn.hide()  # rodapé estreito: o desfazer tem prioridade
         self._undo_timer.start()
 
+    def _hide_undo(self):
+        self.undo_btn.hide()
+        self.refresh()  # devolve o "Limpar feitas"
+
     def undo(self):
-        self.store.undo()
-        self.undo_btn.setVisible(False)
+        if self.store.undo():
+            self._undo_timer.stop()
+            self.undo_btn.hide()
 
     def _task_menu(self, lst: TaskList, tid: str, gpos: QPoint):
         t = self.store.get(tid)
@@ -418,6 +690,7 @@ class Panel(QWidget):
             return
         m = QMenu(self)
         m.addAction("Detalhes…\tEnter", lambda: self.open_details(tid))
+        m.addAction("Concluir com comentário…\tShift+Espaço", lambda: lst.request_note(tid))
         a = m.addAction("Pra já\t!", lambda: self.store.toggle_quick(tid))
         a.setCheckable(True)
         a.setChecked(t.quick)
@@ -434,8 +707,11 @@ class Panel(QWidget):
         dm = m.addMenu("Prazo")
         today = dt.date.today()
         for label, days in (("Hoje", 0), ("Amanhã", 1), ("Próxima semana", 7)):
-            dm.addAction(label, lambda *_, d=days: self.store.update_task(
-                tid, due=make_due(today + dt.timedelta(days=d), split_due(t.due)[1])))
+            dm.addAction(label, lambda *_, d=days: self._set_due_date(tid, today + dt.timedelta(days=d)))
+        dm.addSeparator()
+        dm.addAction("Adiar 1 dia\tCtrl+→", lambda: self.postpone(tid, 1))
+        dm.addAction("Adiar 1 semana", lambda: self.postpone(tid, 7))
+        dm.addAction("Adiar pra segunda", lambda: self._set_due_date(tid, next_weekday(0, today)))
         if t.due:
             dm.addSeparator()
             dm.addAction("Remover prazo", lambda: self.store.update_task(tid, due=None))
@@ -465,8 +741,10 @@ class Panel(QWidget):
             return
         if not self.isVisible():
             self.show_panel()
+        self.close_note()
         self.stack.setCurrentWidget(self.details)
         self.input.hide()
+        self.search.hide()
         self.groupbar.hide()
         self.clear_btn.hide()
         if focus_notes:
@@ -482,6 +760,7 @@ class Panel(QWidget):
         self.details.tid = None
         self.stack.setCurrentIndex(0 if self.store.settings["view"] == "list" else 1)
         self.input.show()
+        self.search.setVisible(self._searching)
         self.refresh()
         self.input.setFocus()
 
@@ -549,11 +828,11 @@ class Panel(QWidget):
 
     def _delete_group(self, gid: str):
         if self.store.delete_group(gid):
-            self._offer_undo()
+            self._offer_undo("Grupo excluído")
 
     # preferências
     def _set_hide_done(self, on: bool):
-        self.store.set_setting("hide_done", on)
+        self.store.set_setting("hide_done", bool(on))
         self.refresh()
 
     def set_pinned(self, on: bool):
@@ -614,7 +893,7 @@ class Panel(QWidget):
     def _animate_geometry(self, target: QRect):
         self._stop_anim()
         a = QPropertyAnimation(self, b"geometry", self)
-        a.setDuration(180)
+        a.setDuration(160)
         a.setStartValue(self.geometry())
         a.setEndValue(target)
         a.setEasingCurve(QEasingCurve.Type.OutCubic)
@@ -653,12 +932,12 @@ class Panel(QWidget):
 
         grp = QParallelAnimationGroup(self)
         pos = QPropertyAnimation(self, b"pos", self)
-        pos.setDuration(190)
+        pos.setDuration(170)
         pos.setStartValue(start.topLeft())
         pos.setEndValue(target.topLeft())
         pos.setEasingCurve(QEasingCurve.Type.OutCubic)
         op = QPropertyAnimation(self, b"windowOpacity", self)
-        op.setDuration(150)
+        op.setDuration(120)
         op.setStartValue(0.0)
         op.setEndValue(1.0)
         grp.addAnimation(pos)
@@ -676,12 +955,12 @@ class Panel(QWidget):
         self._hiding = True
         grp = QParallelAnimationGroup(self)
         pos = QPropertyAnimation(self, b"pos", self)
-        pos.setDuration(140)
+        pos.setDuration(120)
         pos.setStartValue(self.pos())
         pos.setEndValue(self.pos() + QPoint(self._slide_dx(), 0))
         pos.setEasingCurve(QEasingCurve.Type.InCubic)
         op = QPropertyAnimation(self, b"windowOpacity", self)
-        op.setDuration(140)
+        op.setDuration(110)
         op.setStartValue(self.windowOpacity())
         op.setEndValue(0.0)
         grp.addAnimation(pos)
@@ -749,12 +1028,35 @@ class Panel(QWidget):
                 win_style_window(hwnd)
                 self._styled_hwnd = hwnd
 
+    def eventFilter(self, obj, e):
+        if e.type() == QEvent.Type.KeyPress and obj in (self.input, getattr(self, "search", None)):
+            plain = not e.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+            if e.key() == Qt.Key.Key_Down and plain:
+                self._focus_list()
+                return True
+            if obj is self.search and plain and e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self._focus_list()
+                return True
+            if obj is self.search and e.key() == Qt.Key.Key_Escape:
+                self.close_search()
+                return True
+        return super().eventFilter(obj, e)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if self.help.isVisible():
+            self.help.setGeometry(self.help.parentWidget().rect())
+
     def keyPressEvent(self, e):
         if e.key() == Qt.Key.Key_Escape:
-            if self.details_open():
+            if self.note_bar.isVisible():
+                self.close_note()
+            elif self.details_open():
                 self.close_details()
             elif self.input.hasFocus() and self.input.text():
                 self.input.clear()
+            elif self._searching:
+                self.close_search()
             else:
                 self.hide_panel()
             return

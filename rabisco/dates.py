@@ -213,3 +213,29 @@ def delegate_display(to: str, since: float | None, now: dt.datetime | None = Non
     if not age:
         return to or "delegada", C["soft"]
     return (f"{to} · {age}" if to else age), color
+
+
+def due_datetime(due: str | None) -> dt.datetime | None:
+    """Momento exato do prazo; None se não houver prazo ou se não tiver hora."""
+    d, tm = split_due(due)
+    if d is None or tm is None:
+        return None
+    return dt.datetime.combine(d, dt.time(int(tm[:2]), int(tm[3:5])))
+
+
+def shift_due(due: str | None, days: int, today: dt.date | None = None) -> str:
+    """Adiar/adiantar: conta a partir de hoje se o prazo já passou (ou não existe); mantém a hora.
+
+    Nunca vai para antes de hoje.
+    """
+    today = today or dt.date.today()
+    d, tm = split_due(due)
+    base = max(d, today) if d else today
+    new = max(base + dt.timedelta(days=days), today)
+    return make_due(new, tm)
+
+
+def next_weekday(weekday: int, today: dt.date | None = None) -> dt.date:
+    """Próxima ocorrência do dia da semana (0 = segunda), nunca hoje."""
+    today = today or dt.date.today()
+    return today + dt.timedelta(days=(weekday - today.weekday()) % 7 or 7)

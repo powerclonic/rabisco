@@ -34,6 +34,14 @@ class TaskList(QListWidget):
     detailsRequested = Signal(str)
     editedText = Signal(str, str)
     menuRequested = Signal(str, QPoint)
+    typed = Signal(str)               # letra digitada com a lista em foco: começa uma tarefa nova
+    leaveTop = Signal()               # seta pra cima na primeira tarefa: volta para o campo
+    neighborRequested = Signal(int)   # esquerda / direita: coluna vizinha (quadro)
+    statusStep = Signal(str, int)     # Alt+esquerda / Alt+direita: status anterior / próximo
+    noteRequested = Signal(str)       # Shift+Espaço: concluir com comentário
+    postponeRequested = Signal(str, int)  # Ctrl+direita / Ctrl+esquerda: prazo +1 / -1 dia
+
+    CHECK_DELAY = 260  # ms mostrando o check antes do cartão mudar de lugar
 
     def __init__(self, status: str | None = None, show_check: bool = False, empty_text: str = ""):
         super().__init__()
@@ -42,13 +50,15 @@ class TaskList(QListWidget):
         self._drop_y: int | None = None
         self._drag_over = False
         self._last_width = -1
+        self._advance_row: int | None = None  # após concluir/excluir pelo teclado: fica na mesma linha
         self._relayout = QTimer(self)
         self._relayout.setSingleShot(True)
         self._relayout.setInterval(0)
         self._relayout.timeout.connect(self.doItemsLayout)
 
         self.delegate = CardDelegate(self, show_check)
-        self.delegate.toggled.connect(self.toggleRequested)
+        self.delegate.toggled.connect(self.request_toggle)
+        self.delegate.noteToggled.connect(self.request_note)
         self.delegate.headerToggled.connect(self.headerToggled)
         self.setItemDelegate(self.delegate)
 
@@ -78,7 +88,12 @@ class TaskList(QListWidget):
         """Lista plana (`tasks`) ou agrupada (`sections`, que tem precedência)."""
         cur = self.currentItem()
         cur_id = cur.data(ROLE_ID) if cur else None
+        advance, self._advance_row = self._advance_row, None
+        if advance is not None:
+            cur_id = None  # concluiu/excluiu pelo teclado: a seleção fica na mesma linha
         scroll = self.verticalScrollBar().value()
+        self.delegate.checking.clear()
+        self.setUpdatesEnabled(False)  # reconstrói sem piscar (nem pular a rolagem)
         self.blockSignals(True)
         self.clear()
         if sections is None:
@@ -94,9 +109,14 @@ class TaskList(QListWidget):
                 for t in items:
                     if self._add_task(t, groups, show_group, sec.key) == cur_id:
                         self.setCurrentItem(self.item(self.count() - 1))
+        if advance is not None and self.count():
+            self.select_near(advance, scroll=False)
         self.blockSignals(False)
-        QTimer.singleShot(0, lambda: self.verticalScrollBar().setValue(scroll))
-        self.viewport().update()
+        self.doItemsLayout()
+        self.verticalScrollBar().setValue(scroll)
+        if self.hasFocus() and self.currentItem() is not None:
+            self.scrollToItem(self.currentItem())
+        self.setUpdatesEnabled(True)
 
     def _add_task(self, t: Task, groups: dict[str, Group], show_group: bool, section: str) -> str:
         it = QListWidgetItem(t.text)
@@ -144,6 +164,66 @@ class TaskList(QListWidget):
         it = self.currentItem()
         return it.data(ROLE_ID) if self._is_task(it) else None
 
+    def has_tasks(self) -> bool:
+        return self._task_row(0, 1) is not None
+
+    def _task_row(self, row: int, step: int) -> int | None:
+        """Primeira linha de tarefa a partir de row (inclusive), andando step."""
+        while 0 <= row < self.count():
+            if self._is_task(self.item(row)):
+                return row
+            row += step
+        return None
+
+    def _item_of(self, tid: str) -> QListWidgetItem | None:
+        return next((self.item(r) for r in range(self.count()) if self.item(r).data(ROLE_ID) == tid), None)
+
+    def select_id(self, tid: str) -> bool:
+        it = self._item_of(tid)
+        if it is None:
+            return False
+        self.setCurrentItem(it)
+        self.scrollToItem(it)
+        return True
+
+    def select_near(self, row: int, scroll: bool = True) -> None:
+        """Seleciona a tarefa mais próxima da linha row (preferindo a de baixo)."""
+        row = max(0, min(row, self.count() - 1))
+        r = self._task_row(row, 1)
+        if r is None:
+            r = self._task_row(row, -1)
+        if r is not None:
+            self.setCurrentRow(r)
+            if scroll:
+                self.scrollToItem(self.item(r))
+
+    def request_note(self, tid: str, advance: bool = False) -> None:
+        """Conclui (se ainda não estiver feita) e pede o comentário."""
+        it = self._item_of(tid)
+        if it is None:
+            return
+        if it.data(ROLE_STATUS) != "done":
+            self.request_toggle(tid, advance)
+        self.noteRequested.emit(tid)
+
+    def request_toggle(self, tid: str, advance: bool = False) -> None:
+        """Concluir mostra o check por um instante antes de o cartão mudar de lugar."""
+        if tid in self.delegate.checking:
+            return
+        it = self._item_of(tid)
+        if it is None or it.data(ROLE_STATUS) == "done":
+            self.toggleRequested.emit(tid)  # desmarcar é imediato
+            return
+        self.delegate.checking.add(tid)
+        self.viewport().update(self.visualItemRect(it))
+        row = self.row(it) if advance else None
+
+        def finish():
+            if tid in self.delegate.checking:
+                self._advance_row = row
+                self.toggleRequested.emit(tid)
+        QTimer.singleShot(self.CHECK_DELAY, finish)
+
     def _on_item_changed(self, item: QListWidgetItem) -> None:
         if self._is_task(item):
             self.editedText.emit(item.data(ROLE_ID), item.text())
@@ -175,19 +255,71 @@ class TaskList(QListWidget):
             return
         super().mouseDoubleClickEvent(e)
 
+    def focusInEvent(self, e):
+        super().focusInEvent(e)
+        if self.current_id() is None:
+            self.select_near(0)
+
+    def moveCursor(self, action, modifiers):
+        """Setas, Home/End e PgUp/PgDn pulam os cabeçalhos de seção."""
+        idx = super().moveCursor(action, modifiers)
+        if not idx.isValid() or self._is_task(self.item(idx.row())):
+            return idx
+        A = QAbstractItemView.CursorAction
+        up = action in (A.MoveUp, A.MovePageUp, A.MovePrevious, A.MoveLeft, A.MoveEnd)
+        row = self._task_row(idx.row(), -1 if up else 1)
+        if row is None:
+            row = self._task_row(idx.row(), 1 if up else -1)
+        return self.model().index(row, 0) if row is not None else self.currentIndex()
+
+    def _reorder(self, tid: str, delta: int) -> None:
+        """Alt+cima / Alt+baixo: troca de lugar com a vizinha (dentro da mesma seção)."""
+        it = self.currentItem()
+        row, sec = self.row(it), it.data(ROLE_SECTION) or ""
+        nb = self.item(row + delta)
+        if not self._is_task(nb) or (nb.data(ROLE_SECTION) or "") != sec:
+            return
+        before = nb.data(ROLE_ID) if delta < 0 else self._next_in_section(nb, sec)
+        self.dropped.emit(tid, self.status or "", before or "", sec)
+
     def keyPressEvent(self, e):
         tid = self.current_id()
         k = e.key()
+        mods = e.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+        alt = mods == Qt.KeyboardModifier.AltModifier
+        ctrl = mods == Qt.KeyboardModifier.ControlModifier
+        plain = mods in (Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.ShiftModifier)
         if k == Qt.Key.Key_Escape:
             e.ignore()  # sobe para o painel
             return
+        if tid and alt and k in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            self._reorder(tid, -1 if k == Qt.Key.Key_Up else 1)
+            return
+        if tid and alt and k in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+            self.statusStep.emit(tid, -1 if k == Qt.Key.Key_Left else 1)
+            return
+        if tid and ctrl and k in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+            self.postponeRequested.emit(tid, -1 if k == Qt.Key.Key_Left else 1)
+            return
+        if not mods and k in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+            if self.status is not None:
+                self.neighborRequested.emit(-1 if k == Qt.Key.Key_Left else 1)
+            return
+        if not mods and k == Qt.Key.Key_Up and (
+                tid is None or self._task_row(self.currentRow() - 1, -1) is None):
+            self.leaveTop.emit()
+            return
         if tid and k == Qt.Key.Key_Delete:
+            self._advance_row = self.currentRow()
             self.deleteRequested.emit(tid)
             return
-        if tid and k == Qt.Key.Key_Space:
-            self.toggleRequested.emit(tid)
+        if tid and k == Qt.Key.Key_Space and mods == Qt.KeyboardModifier.ShiftModifier:
+            self.request_note(tid, advance=True)
             return
-        if tid and k in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+        if tid and k == Qt.Key.Key_Space and not mods:
+            self.request_toggle(tid, advance=True)
+            return
+        if tid and k in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not mods:
             self.detailsRequested.emit(tid)
             return
         if tid and e.text() == "!":
@@ -195,6 +327,10 @@ class TaskList(QListWidget):
             return
         if tid and e.text() == ">":
             self.delegateRequested.emit(tid)
+            return
+        txt = e.text()
+        if plain and txt and txt.isprintable() and not txt.isspace():
+            self.typed.emit(txt)  # digitar com a lista em foco começa uma tarefa nova
             return
         super().keyPressEvent(e)
 

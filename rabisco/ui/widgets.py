@@ -1,8 +1,10 @@
-"""Coluna do quadro e barra de grupos (chips de filtro)."""
+"""Coluna do quadro, barra de grupos (chips de filtro) e cola de atalhos."""
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QApplication, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
+)
 
 from ..config import C, STATUS_LABEL
 from ..store import Group, Task
@@ -32,7 +34,7 @@ class Column(QFrame):
         head.addWidget(self.count)
         head.addStretch(1)
         lay.addLayout(head)
-        empty = {"todo": "Nada a fazer", "doing": "Arraste algo pra cá", "done": "Nada feito ainda"}[status]
+        empty = {"todo": "Nada a fazer", "doing": "Arraste pra cá (ou Alt+→)", "done": "Nada feito ainda"}[status]
         self.list = TaskList(status=status, show_check=False, empty_text=empty)
         lay.addWidget(self.list, 1)
 
@@ -107,3 +109,122 @@ class GroupBar(QScrollArea):
         sb = self.horizontalScrollBar()
         sb.setValue(sb.value() - e.angleDelta().y() // 2)
         e.accept()
+
+
+SHORTCUTS = [
+    ("Geral", [
+        ("Ctrl+Alt+K", "mostrar / esconder (de qualquer lugar)"),
+        ("Ctrl+N", "ir para o campo de anotar"),
+        ("Ctrl+F", "buscar (Enter/↓ vai pros resultados, Esc fecha)"),
+        ("Ctrl+1 · Ctrl+2", "lista · quadro"),
+        ("Ctrl+Tab", "alternar lista / quadro"),
+        ("Alt+0 … Alt+9", "filtro: tudo · grupo 1 … 9"),
+        ("Ctrl+H", "ocultar / mostrar feitas"),
+        ("Ctrl+Z", "desfazer (excluir, concluir)"),
+        ("Esc", "voltar · limpar o campo · esconder"),
+        ("F1", "esta ajuda"),
+    ]),
+    ("Campo de anotar", [
+        ("Enter", "adiciona"),
+        ("Shift+Enter", "adiciona em Fazendo"),
+        ("Ctrl+Enter", "adiciona e abre os detalhes"),
+        ("↓", "vai para a lista"),
+        ("!  >  #  @", "no texto: pra já · delegada · #grupo · @prazo"),
+    ]),
+    ("Tarefa selecionada", [
+        ("↑ ↓ · Home End", "navegar (↑ no topo volta ao campo)"),
+        ("← →", "coluna vizinha (quadro)"),
+        ("Espaço", "concluir / reabrir"),
+        ("Shift+Espaço", "concluir com comentário (ou Shift+clique)"),
+        ("Enter · F2", "detalhes · renomear"),
+        ("!  ·  >", "pra já · delegada"),
+        ("Alt+↑ · Alt+↓", "subir · descer"),
+        ("Alt+← · Alt+→", "status anterior · próximo"),
+        ("Ctrl+← · Ctrl+→", "prazo −1 dia · adiar 1 dia"),
+        ("Del", "excluir"),
+        ("qualquer letra", "começa uma tarefa nova"),
+    ]),
+    ("Detalhes", [
+        ("Ctrl+Enter · Esc", "voltar"),
+        ("Enter no título", "vai para a descrição"),
+    ]),
+]
+
+
+class ShortcutsOverlay(QFrame):
+    """Cola de atalhos por cima do painel. Qualquer tecla ou clique fecha."""
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.setObjectName("overlay")
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._back_to: QWidget | None = None
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(16, 14, 16, 12)
+        lay.setSpacing(8)
+        head = QHBoxLayout()
+        title = QLabel("Atalhos de teclado")
+        title.setObjectName("title")
+        hint = QLabel("qualquer tecla fecha")
+        hint.setObjectName("hint")
+        head.addWidget(title, 1)
+        head.addWidget(hint)
+        lay.addLayout(head)
+
+        body = QWidget()
+        body.setObjectName("chipRow")  # fundo transparente
+        grid = QGridLayout(body)
+        grid.setContentsMargins(0, 0, 4, 0)
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(5)
+        grid.setColumnStretch(1, 1)
+        r = 0
+        for section, items in SHORTCUTS:
+            head_lbl = QLabel(section)
+            head_lbl.setObjectName("overlaySection")
+            grid.addWidget(head_lbl, r, 0, 1, 2)
+            r += 1
+            for keys, what in items:
+                k = QLabel(keys)
+                k.setObjectName("kbd")
+                w = QLabel(what)
+                w.setObjectName("soft")
+                w.setWordWrap(True)
+                grid.addWidget(k, r, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+                grid.addWidget(w, r, 1, Qt.AlignmentFlag.AlignTop)
+                r += 1
+        grid.setRowStretch(r, 1)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        scroll.setWidget(body)
+        lay.addWidget(scroll, 1)
+        self.hide()
+
+    def open(self) -> None:
+        self._back_to = QApplication.focusWidget()
+        self.setGeometry(self.parentWidget().rect())
+        self.show()
+        self.raise_()
+        self.setFocus()
+
+    def close_overlay(self) -> None:
+        self.hide()
+        if self._back_to is not None and self._back_to.isVisible():
+            self._back_to.setFocus()
+        self._back_to = None
+
+    def keyPressEvent(self, e):
+        if e.key() in (Qt.Key.Key_Shift, Qt.Key.Key_Control, Qt.Key.Key_Alt, Qt.Key.Key_Meta):
+            return
+        self.close_overlay()
+
+    def mousePressEvent(self, e):
+        self.close_overlay()
+
+    def focusOutEvent(self, e):
+        super().focusOutEvent(e)
+        if self.isVisible() and not self.isAncestorOf(QApplication.focusWidget()):
+            self.hide()

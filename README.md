@@ -21,17 +21,29 @@ O app fica no tray. Para abrir junto com o Windows: menu **⋯ → Iniciar com o
 | Ação | Como |
 | --- | --- |
 | Mostrar / esconder de qualquer lugar | `Ctrl+Alt+K` (ou clique no ícone do tray) |
+| Ver todos os atalhos | `F1` (ou menu **⋯ → Atalhos de teclado**) |
 | Adicionar | digitar + `Enter` |
 | Adicionar já em "Fazendo" | `Shift+Enter` |
 | Adicionar e abrir detalhes | `Ctrl+Enter` ou o ícone de lápis no campo |
+| Ir do campo para a lista / voltar | `↓` / `↑` na primeira tarefa (ou `Ctrl+N`) |
+| Começar uma tarefa com a lista em foco | é só digitar: o texto vai para o campo |
 | Fechar | `Esc` |
-| Lista / Quadro | `Ctrl+1` / `Ctrl+2` |
-| Concluir | clique no círculo ou `Espaço` |
+| Lista / Quadro | `Ctrl+1` / `Ctrl+2` (`Ctrl+Tab` alterna) |
+| Filtrar por grupo | `Alt+1`…`Alt+9` (`Alt+0` = tudo) |
+| Ocultar / mostrar feitas | `Ctrl+H` |
+| Concluir / reabrir | clique no círculo ou `Espaço` (a seleção fica no lugar, pronta pra próxima) |
+| Concluir com comentário | `Shift+Espaço` ou Shift+clique no círculo |
+| Buscar | `Ctrl+F` (`Enter`/`↓` vai pros resultados, `Esc` fecha) |
+| Adiar o prazo 1 dia / trazer 1 dia | `Ctrl+→` / `Ctrl+←` (mais opções no botão direito → *Prazo*) |
 | Marcar / desmarcar "pra já" | `!` na tarefa selecionada (ou botão direito) |
 | Marcar / desmarcar delegada | `>` na tarefa selecionada (ou botão direito → *Delegar para…*) |
-| Detalhes (descrição, prazo, grupo) | duplo clique ou `Enter` na tarefa |
+| Detalhes (descrição, prazo, grupo) | duplo clique ou `Enter` na tarefa; `Ctrl+Enter` ou `Esc` volta |
 | Renomear rápido | `F2` |
-| Excluir / desfazer | `Del` / `Ctrl+Z` (ou o botão "Desfazer" no rodapé) |
+| Subir / descer na lista | `Alt+↑` / `Alt+↓` (ou arrastar) |
+| Mudar status (A fazer ↔ Fazendo ↔ Feito) | `Alt+←` / `Alt+→` |
+| Trocar de coluna no quadro | `←` / `→` |
+| Excluir | `Del` |
+| Desfazer exclusão ou conclusão | `Ctrl+Z` (ou o botão no rodapé) |
 | Mover entre colunas ou reordenar | arrastar e soltar |
 
 ### Pra já ⚡
@@ -93,6 +105,18 @@ ligar pro banco #casa @amanhã 14h
 - depois da data pode vir uma hora: `14h`, `14h30`, `14:30`
 
 Prazos aparecem nos cartões como "Hoje", "Amanhã", "Sex 14:00"… em amarelo quando é hoje e em vermelho quando estão atrasados.
+
+### Comentário ao concluir
+
+`Shift+Espaço` (ou Shift+clique no círculo) conclui a tarefa e abre um campinho **"Como ficou?"** no lugar do campo de anotar. O que você escrever vai para o fim da descrição com a data — `✓ 27/11: mandei pro cliente` — e aparece no cartão. `Esc` pula. O `Espaço` normal continua instantâneo.
+
+### Lembretes
+
+Prazos **com hora** (`@amanhã 14h`) geram uma notificação do Windows na hora marcada (uma vez só; se você mudar o prazo, avisa de novo). Clicar na notificação abre a tarefa. Se o PC estava desligado, avisa ao abrir, desde que o prazo tenha passado há menos de 24h. Dá para desligar em **⋯ → Avisar na hora do prazo**.
+
+### Busca e adiar
+
+`Ctrl+F` filtra a vista atual (lista ou quadro) pelo título, descrição, pessoa ou grupo, sem ligar para acentos (`cafe` acha "café"); durante a busca as seções recolhidas abrem. `Ctrl+→` empurra o prazo um dia — se já venceu, conta a partir de hoje, e a hora é mantida; sem prazo vira amanhã. No botão direito → *Prazo* há também *Adiar 1 semana* e *Adiar pra segunda*.
 
 ### Grupos
 

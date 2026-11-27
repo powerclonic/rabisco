@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import copy
+import datetime as dt
 import json
 import os
 import time
+import unicodedata
 import uuid
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
@@ -12,7 +14,15 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from .config import DEFAULT_SETTINGS, GROUP_COLORS, STATUSES, log_error
-from .dates import split_due
+from .dates import due_datetime, shift_due, split_due
+
+REMIND_WINDOW = dt.timedelta(hours=24)  # prazo que passou há mais que isso não gera aviso
+
+
+def fold(text: str) -> str:
+    """Minúsculas e sem acento: 'Café' e 'cafe' batem na busca."""
+    nfd = unicodedata.normalize("NFD", text.casefold())
+    return "".join(c for c in nfd if not unicodedata.combining(c))
 
 
 @dataclass
@@ -30,6 +40,7 @@ class Task:
     delegated: bool = False         # delegada: está com outra pessoa
     delegated_to: str = ""          # pra quem (opcional)
     delegated_since: float | None = None
+    reminded: str | None = None     # prazo que já foi avisado (muda o prazo -> avisa de novo)
 
 
 @dataclass
@@ -152,6 +163,33 @@ class Store(QObject):
         f = self.settings["filter"]
         return self.tasks if f == "all" else [t for t in self.tasks if t.group == f]
 
+    def search(self, tasks: list[Task], query: str) -> list[Task]:
+        """Todas as palavras precisam aparecer no título, descrição, pessoa ou grupo."""
+        words = fold(query).split()
+        if not words:
+            return tasks
+        gnames = {g.id: g.name for g in self.groups}
+        out = []
+        for t in tasks:
+            hay = fold(" ".join((t.text, t.notes, t.delegated_to, gnames.get(t.group, ""))))
+            if all(w in hay for w in words):
+                out.append(t)
+        return out
+
+    def due_reminders(self, now: dt.datetime | None = None) -> list[Task]:
+        """Tarefas abertas cujo prazo com hora chegou e ainda não foram avisadas (marca como avisadas)."""
+        now = now or dt.datetime.now()
+        hits = []
+        for t in self.tasks:
+            when = due_datetime(t.due)
+            if (t.status != "done" and when is not None and t.reminded != t.due
+                    and when <= now and now - when <= REMIND_WINDOW):
+                t.reminded = t.due
+                hits.append(t)
+        if hits:
+            self.schedule_save()
+        return hits
+
     # tarefas
     @staticmethod
     def _apply_status(t: Task, status: str) -> None:
@@ -208,6 +246,8 @@ class Store(QObject):
         t = self.get(tid)
         if not t or t.status == status:
             return
+        if status == "done":
+            self._snapshot()  # concluir sem querer é comum: dá pra desfazer
         self.tasks.remove(t)
         self._apply_status(t, status)
         self._insert_first_of_group(t)
@@ -304,6 +344,22 @@ class Store(QObject):
             self._touch()
         else:
             self.move(tid, None, before_id)
+
+    def postpone(self, tid: str, days: int, today: dt.date | None = None) -> None:
+        """Empurra o prazo `days` dias (a partir de hoje se já venceu; sem prazo vira hoje + days)."""
+        t = self.get(tid)
+        if t:
+            self.update_task(tid, due=shift_due(t.due, days, today))
+
+    def add_note(self, tid: str, note: str, when: float | None = None) -> None:
+        """Comentário de conclusão: entra no fim da descrição, com a data."""
+        t = self.get(tid)
+        note = " ".join(note.split())
+        if not t or not note:
+            return
+        stamp = time.strftime("%d/%m", time.localtime(when or time.time()))
+        line = f"✓ {stamp}: {note}"
+        self.update_task(tid, notes=f"{t.notes.rstrip()}\n\n{line}" if t.notes.strip() else line)
 
     def toggle_done(self, tid: str) -> None:
         t = self.get(tid)

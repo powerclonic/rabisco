@@ -170,3 +170,70 @@ def test_drop_em_delegadas_e_de_volta(store):
     assert t.delegated and not t.quick
     store.drop_into_section(a.id, "nodue", None)
     assert not t.delegated and t.delegated_since is None
+
+
+def test_concluir_pode_ser_desfeito(store):
+    a = store.add("a")
+    store.toggle_done(a.id)
+    assert store.get(a.id).status == "done" and store.can_undo()
+    assert store.undo()
+    assert store.get(a.id).status == "todo"
+    store.toggle_done(a.id)
+    store.toggle_done(a.id)  # reabrir não empilha outro desfazer
+    store.undo()
+    assert store.get(a.id).status == "todo" and not store.can_undo()
+
+
+def test_busca_ignora_acento_e_olha_descricao_pessoa_e_grupo(store):
+    g = store.add_group("Trabalho")
+    a = store.add("Comprar café", group=g.id)
+    b = store.add("revisar contrato", delegate="Ana")
+    store.update_task(b.id, notes="cláusula de multa")
+    store.add("outra coisa")
+    find = lambda q: {t.text for t in store.search(store.tasks, q)}
+    assert find("cafe") == {"Comprar café"}
+    assert find("CLAUSULA") == {"revisar contrato"}
+    assert find("ana") == {"revisar contrato"}
+    assert find("trab compr") == {a.text}
+    assert find("   ") == {t.text for t in store.tasks}
+
+
+def test_lembretes_avisam_uma_vez_e_de_novo_se_o_prazo_mudar(store):
+    import datetime as dt
+    now = dt.datetime(2026, 11, 27, 14, 0)
+    a = store.add("ligar", due="2026-11-27 13:59")
+    store.add("sem hora", due="2026-11-27")
+    store.add("futura", due="2026-11-27 15:00")
+    store.add("antiga", due="2026-11-20 10:00")  # passou há mais de 24h: não avisa
+    feita = store.add("feita", due="2026-11-27 13:00")
+    store.toggle_done(feita.id)
+    assert [t.text for t in store.due_reminders(now)] == ["ligar"]
+    assert store.due_reminders(now) == []
+    store.update_task(a.id, due="2026-11-27 14:00")
+    assert [t.text for t in store.due_reminders(now)] == ["ligar"]
+
+
+def test_adiar_conta_de_hoje_se_venceu_e_mantem_hora(store):
+    import datetime as dt
+    hoje = dt.date(2026, 11, 27)
+    a = store.add("a", due="2026-11-20 09:30")
+    store.postpone(a.id, 1, hoje)
+    assert store.get(a.id).due == "2026-11-28 09:30"
+    store.postpone(a.id, 1, hoje)
+    assert store.get(a.id).due == "2026-11-29 09:30"
+    store.postpone(a.id, -5, hoje)
+    assert store.get(a.id).due == "2026-11-27 09:30"  # nunca antes de hoje
+    b = store.add("b")
+    store.postpone(b.id, 1, hoje)
+    assert store.get(b.id).due == "2026-11-28"
+
+
+def test_comentario_de_conclusao_vai_pro_fim_da_descricao(store):
+    a = store.add("a")
+    store.add_note(a.id, "  mandei   pro cliente ", when=0)
+    first = store.get(a.id).notes
+    assert first.startswith("✓ ") and first.endswith(": mandei pro cliente")
+    store.add_note(a.id, "e cobrei", when=0)
+    assert store.get(a.id).notes.count("\n\n✓ ") == 1
+    store.add_note(a.id, "   ")
+    assert store.get(a.id).notes.count("✓") == 2
