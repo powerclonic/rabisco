@@ -120,6 +120,7 @@ SHORTCUTS = [
         ("Ctrl+Tab", "alternar lista / quadro"),
         ("Alt+0 … Alt+9", "filtro: tudo · grupo 1 … 9"),
         ("Ctrl+H", "ocultar / mostrar feitas"),
+        ("Ctrl+R", "relatório de concluídas"),
         ("Ctrl+Z", "desfazer (excluir, concluir)"),
         ("Esc", "voltar · limpar o campo · esconder"),
         ("F1", "esta ajuda"),
@@ -143,6 +144,10 @@ SHORTCUTS = [
         ("Ctrl+← · Ctrl+→", "prazo −1 dia · adiar 1 dia"),
         ("Del", "excluir"),
         ("qualquer letra", "começa uma tarefa nova"),
+    ]),
+    ("Relatório", [
+        ("← →", "período anterior · próximo"),
+        ("Ctrl+C · Copiar", "copia como texto"),
     ]),
     ("Detalhes", [
         ("Ctrl+Enter · Esc", "voltar"),

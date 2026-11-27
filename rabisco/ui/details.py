@@ -36,7 +36,7 @@ class DetailPage(QWidget):
         top = QHBoxLayout()
         top.setSpacing(6)
         back = panel.icon_button(G_BACK, "Voltar (Esc)")
-        back.clicked.connect(panel.close_details)
+        back.clicked.connect(panel.close_page)
         top.addWidget(back)
         top.addStretch(1)
         segbox = QFrame()
@@ -277,5 +277,5 @@ class DetailPage(QWidget):
     def _delete(self):
         if self.tid:
             tid = self.tid
-            self.panel.close_details()
+            self.panel.close_page()
             self.panel.delete_task(tid)

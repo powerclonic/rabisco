@@ -31,6 +31,7 @@ O app fica no tray. Para abrir junto com o Windows: menu **⋯ → Iniciar com o
 | Lista / Quadro | `Ctrl+1` / `Ctrl+2` (`Ctrl+Tab` alterna) |
 | Filtrar por grupo | `Alt+1`…`Alt+9` (`Alt+0` = tudo) |
 | Ocultar / mostrar feitas | `Ctrl+H` |
+| Relatório do que foi concluído | `Ctrl+R` (ou menu **⋯ → Relatório de concluídas**) |
 | Concluir / reabrir | clique no círculo ou `Espaço` (a seleção fica no lugar, pronta pra próxima) |
 | Concluir com comentário | `Shift+Espaço` ou Shift+clique no círculo |
 | Buscar | `Ctrl+F` (`Enter`/`↓` vai pros resultados, `Esc` fecha) |
@@ -118,6 +119,24 @@ Prazos **com hora** (`@amanhã 14h`) geram uma notificação do Windows na hora 
 
 `Ctrl+F` filtra a vista atual (lista ou quadro) pelo título, descrição, pessoa ou grupo, sem ligar para acentos (`cafe` acha "café"); durante a busca as seções recolhidas abrem. `Ctrl+→` empurra o prazo um dia — se já venceu, conta a partir de hoje, e a hora é mantida; sem prazo vira amanhã. No botão direito → *Prazo* há também *Adiar 1 semana* e *Adiar pra segunda*.
 
+### Relatório de concluídas
+
+`Ctrl+R` abre o que você concluiu em **Hoje · Ontem · Semana · Mês** ou num **Período** com datas livres (`←`/`→` troca o período). As tarefas aparecem agrupadas por dia, com hora, grupo, pessoa (se era delegada) e os comentários de conclusão. Dá para filtrar por grupo, e **Copiar** (ou `Ctrl+C`) gera um texto pronto pra daily, e-mail ou chat:
+
+```
+Concluídas — 23/11 a 27/11 (3)
+
+Hoje
+- deploy da API [trabalho]
+  - subiu sem erro
+- pagar boleto [casa]
+
+Ontem
+- revisar contrato [trabalho, com Ana]
+```
+
+"Limpar feitas" **arquiva** as concluídas: somem da lista, mas continuam no relatório (e `Ctrl+Z` desfaz). Só `Del` apaga de vez.
+
 ### Grupos
 
 Ao criar o primeiro grupo aparece uma barra de filtros (Tudo · Trabalho · Casa · +). Com um grupo selecionado, as tarefas novas entram nele. Botão direito no grupo: renomear, mudar cor ou excluir (as tarefas são mantidas).
@@ -136,12 +155,14 @@ rabisco/
   app.py               instância única, tema, tray, atalho global, loop do Qt
   config.py            constantes, cores, caminhos, log de erros
   dates.py             prazos: digitação rápida e rótulos (sem Qt)
+  report.py            relatório de concluídas: períodos e texto (sem Qt)
   sections.py          agrupamento da lista em seções (sem Qt)
-  store.py             tarefas, grupos, persistência, desfazer
+  store.py             tarefas, grupos, arquivo, persistência, desfazer
   winapi.py            Win32: hotkey global, sempre no topo, cantos arredondados, autostart
   ui/
     panel.py           janela principal (painel lateral, menus, animações)
     details.py         página de detalhes da tarefa
+    report.py          página do relatório de concluídas
     tasklist.py        lista de cartões com arrastar e soltar
     delegate.py        desenho dos cartões
     widgets.py         coluna do quadro e barra de grupos

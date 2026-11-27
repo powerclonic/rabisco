@@ -60,8 +60,9 @@ class Store(QObject):
         self.path = path
         self.tasks: list[Task] = []
         self.groups: list[Group] = []
+        self.archive: list[Task] = []   # feitas que saíram da lista ("Limpar feitas"): só pro relatório
         self.settings: dict = copy.deepcopy(DEFAULT_SETTINGS)
-        self._undo: list[tuple[list[Task], list[Group]]] = []
+        self._undo: list[tuple[list[Task], list[Group], list[Task]]] = []
         self._save_timer = QTimer(self)
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(400)
@@ -88,6 +89,14 @@ class Store(QObject):
                 self.groups.append(Group(**{k: v for k, v in d.items() if k in gnames}))
         gids = {g.id for g in self.groups}
         tnames = {f.name for f in fields(Task)}
+        for d in raw.get("archive", []):
+            if isinstance(d, dict) and d.get("text") and d.get("done_at"):
+                t = Task(**{k: v for k, v in d.items() if k in tnames})
+                t.status = "done"
+                if t.group not in gids:
+                    t.group = None
+                t.notes = t.notes or ""
+                self.archive.append(t)
         for d in raw.get("tasks", []):
             if isinstance(d, dict) and d.get("text"):
                 t = Task(**{k: v for k, v in d.items() if k in tnames})
@@ -115,6 +124,8 @@ class Store(QObject):
             self.settings["sort"] = "smart"
         if not isinstance(self.settings["collapsed"], list):
             self.settings["collapsed"] = list(DEFAULT_SETTINGS["collapsed"])
+        if self.settings["report_period"] not in ("today", "yesterday", "week", "month", "custom"):
+            self.settings["report_period"] = DEFAULT_SETTINGS["report_period"]
 
     def save_now(self) -> None:
         self._save_timer.stop()
@@ -122,7 +133,8 @@ class Store(QObject):
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(".tmp")
             data = {"version": 2, "tasks": [asdict(t) for t in self.tasks],
-                    "groups": [asdict(g) for g in self.groups], "settings": self.settings}
+                    "groups": [asdict(g) for g in self.groups],
+                    "archive": [asdict(t) for t in self.archive], "settings": self.settings}
             tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
             os.replace(tmp, self.path)
         except OSError as e:
@@ -175,6 +187,19 @@ class Store(QObject):
             if all(w in hay for w in words):
                 out.append(t)
         return out
+
+    def completed(self, start: dt.date, end: dt.date, group: str | None = None) -> list[Task]:
+        """Concluídas entre start e end (inclusive, pelo dia local), da mais recente pra mais antiga.
+
+        Inclui as arquivadas por "Limpar feitas".
+        """
+        out = []
+        for t in (*self.tasks, *self.archive):
+            if t.status != "done" or not t.done_at or (group and t.group != group):
+                continue
+            if start <= dt.date.fromtimestamp(t.done_at) <= end:
+                out.append(t)
+        return sorted(out, key=lambda t: t.done_at, reverse=True)
 
     def due_reminders(self, now: dt.datetime | None = None) -> list[Task]:
         """Tarefas abertas cujo prazo com hora chegou e ainda não foram avisadas (marca como avisadas)."""
@@ -387,7 +412,7 @@ class Store(QObject):
         self._touch()
 
     def _snapshot(self) -> None:
-        self._undo.append((copy.deepcopy(self.tasks), copy.deepcopy(self.groups)))
+        self._undo.append((copy.deepcopy(self.tasks), copy.deepcopy(self.groups), copy.deepcopy(self.archive)))
         del self._undo[:-20]
 
     def delete(self, tid: str) -> bool:
@@ -405,6 +430,7 @@ class Store(QObject):
             self._snapshot()
             ids = {t.id for t in hit}
             self.tasks = [t for t in self.tasks if t.id not in ids]
+            self.archive.extend(hit)  # some da lista, mas continua no relatório
             self._touch()
         return len(hit)
 
@@ -414,7 +440,7 @@ class Store(QObject):
     def undo(self) -> bool:
         if not self._undo:
             return False
-        self.tasks, self.groups = self._undo.pop()
+        self.tasks, self.groups, self.archive = self._undo.pop()
         if self.settings["filter"] != "all" and not self.get_group(self.settings["filter"]):
             self.settings["filter"] = "all"
         self._touch()
@@ -456,7 +482,7 @@ class Store(QObject):
             return False
         self._snapshot()
         self.groups.remove(g)
-        for t in self.tasks:
+        for t in (*self.tasks, *self.archive):
             if t.group == gid:
                 t.group = None
         if self.settings["filter"] == gid:

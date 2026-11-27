@@ -20,6 +20,7 @@ from ..sections import build_sections, quick_first
 from ..store import Group, Store, Task
 from ..winapi import get_autostart, set_autostart
 from .details import DetailPage
+from .report import ReportPage
 from .tasklist import TaskList
 from .theme import dot_icon, glyph_icon
 from .widgets import Column, GroupBar, ShortcutsOverlay
@@ -199,6 +200,8 @@ class Panel(QWidget):
 
         self.details = DetailPage(self)
         self.stack.addWidget(self.details)
+        self.report = ReportPage(self)
+        self.stack.addWidget(self.report)
         lay.addWidget(self.stack, 1)
 
         # rodapé
@@ -217,6 +220,7 @@ class Panel(QWidget):
         self.clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.clear_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.clear_btn.clicked.connect(self.clear_done)
+        self.clear_btn.setToolTip("Tira as feitas da lista (continuam no relatório, Ctrl+R)")
         foot.addWidget(self.undo_btn)
         foot.addWidget(self.clear_btn)
         lay.addLayout(foot)
@@ -289,6 +293,7 @@ class Panel(QWidget):
             self.act_autostart.toggled.connect(set_autostart)
         m.addSeparator()
         m.addAction("Buscar…\tCtrl+F", self.open_search)
+        m.addAction("Relatório de concluídas…\tCtrl+R", self.open_report)
         m.addAction("Novo grupo…", self._new_group_and_select)
         self.act_undo = m.addAction("Desfazer\tCtrl+Z", self.undo)
         m.addAction("Atalhos de teclado\tF1", self.show_help)
@@ -351,6 +356,7 @@ class Panel(QWidget):
         sc("Ctrl+Z", self.undo)
         sc("Ctrl+H", lambda: self._set_hide_done(not self.store.settings["hide_done"]))
         sc("Ctrl+F", self.open_search)
+        sc("Ctrl+R", self.open_report)
         sc("Ctrl+Return", self._ctrl_enter)
         sc("Ctrl+Enter", self._ctrl_enter)
         sc("F1", self.show_help)
@@ -371,7 +377,7 @@ class Panel(QWidget):
         vis = s.visible()
         query = self._query()
         shown = s.search(vis, query) if query else vis
-        if not self.details_open():  # só reconstrói a página que está na tela
+        if not self.page_open():  # só reconstrói a página que está na tela
             groups = {g.id: g for g in s.groups}
             show_group = s.settings["filter"] == "all"
             if self.stack.currentIndex() == 0:
@@ -394,21 +400,23 @@ class Panel(QWidget):
             if t.group and t.status != "done":
                 counts[t.group] = counts.get(t.group, 0) + 1
         self.groupbar.set_groups(s.groups, s.settings["filter"], counts)
-        self.groupbar.setVisible(bool(s.groups) and not self.details_open())
+        self.groupbar.setVisible(bool(s.groups) and not self.page_open())
 
         if query:
             n = len(shown)
             self.counter.setText(f"{n} resultado{'s' if n != 1 else ''}")
         else:
             self._update_counter(vis)
-        self.clear_btn.setVisible(any(t.status == "done" for t in vis) and not self.details_open()
+        self.clear_btn.setVisible(any(t.status == "done" for t in vis) and not self.page_open()
                                   and self.undo_btn.isHidden())
 
-        if self.details_open():
+        if self.stack.currentWidget() is self.details:
             if s.get(self.details.tid) is None:
-                self.close_details()
+                self.close_page()
             else:
                 self.details.sync_groups()
+        elif self.stack.currentWidget() is self.report:
+            self.report.reload()
 
     def _update_counter(self, vis: list[Task]):
         open_ = [t for t in vis if t.status != "done"]
@@ -436,8 +444,8 @@ class Panel(QWidget):
 
     # ações
     def _focus_input(self, select: bool = True):
-        if self.details_open():
-            self.close_details()
+        if self.page_open():
+            self.close_page()
         self.input.setFocus()
         if select:
             self.input.selectAll()
@@ -467,8 +475,8 @@ class Panel(QWidget):
     def open_search(self):
         if not self.isVisible():
             self.show_panel()
-        if self.details_open():
-            self.close_details()
+        if self.page_open():
+            self.close_page()
         self._searching = True
         self.search.show()
         self.search.setFocus()
@@ -489,8 +497,8 @@ class Panel(QWidget):
         t = self.store.get(tid)
         if not t:
             return
-        if self.details_open():
-            self.close_details()
+        if self.page_open():
+            self.close_page()
         self._note_tid, self._note_back = tid, back
         fm = self.note_title.fontMetrics()
         self.note_title.setText(fm.elidedText(f"✓  {t.text}", Qt.TextElideMode.ElideRight,
@@ -512,7 +520,7 @@ class Panel(QWidget):
         back = self._note_back
         self._note_tid = self._note_back = None
         self.note_bar.hide()
-        if not self.details_open():
+        if not self.page_open():
             self.input.show()
             if back is not None and back.isVisible() and back.has_tasks():
                 back.setFocus()
@@ -535,7 +543,7 @@ class Panel(QWidget):
         self._refresh_timer.stop()
         self.refresh()
         t = self.store.get(tid)
-        if not t or self.details_open():
+        if not t or self.page_open():
             return
         lst = self.columns[t.status].list if self.store.settings["view"] == "board" else self.list_view
         if lst.select_id(tid):
@@ -594,8 +602,8 @@ class Panel(QWidget):
     def _ctrl_enter(self):
         if self.help.isVisible():
             self.help.close_overlay()
-        if self.details_open():
-            self.close_details()
+        if self.page_open():
+            self.close_page()
         elif self.input.hasFocus():
             self._add_from_input(details=True)
         else:
@@ -667,7 +675,7 @@ class Panel(QWidget):
         f = self.store.settings["filter"]
         n = self.store.clear_done(None if f == "all" else f)
         if n:
-            self._offer_undo(f"{n} feita{'s' if n != 1 else ''} removida{'s' if n != 1 else ''}")
+            self._offer_undo(f"{n} feita{'s' if n != 1 else ''} arquivada{'s' if n != 1 else ''}")
 
     def _offer_undo(self, what: str = ""):
         self.undo_btn.setText(f"{what}  ·  Desfazer" if what else "Desfazer")
@@ -733,31 +741,46 @@ class Panel(QWidget):
         m.exec(gpos)
 
     # detalhes
-    def details_open(self) -> bool:
-        return self.stack.currentWidget() is self.details
+    def page_open(self) -> bool:
+        """Uma página lateral (detalhes ou relatório) está no lugar da lista/quadro."""
+        return self.stack.currentWidget() in (self.details, self.report)
 
-    def open_details(self, tid: str, focus_notes: bool = False):
-        if not self.details.load(tid):
-            return
+    def _show_page(self, page: QWidget):
         if not self.isVisible():
             self.show_panel()
         self.close_note()
-        self.stack.setCurrentWidget(self.details)
+        if self.help.isVisible():
+            self.help.close_overlay()
+        self.stack.setCurrentWidget(page)
         self.input.hide()
         self.search.hide()
         self.groupbar.hide()
         self.clear_btn.hide()
+
+    def open_report(self):
+        if self.stack.currentWidget() is self.report:
+            self.close_page()
+            return
+        self._show_page(self.report)
+        self.report.open()
+        self.report.setFocus()
+
+    def open_details(self, tid: str, focus_notes: bool = False):
+        if not self.details.load(tid):
+            return
+        self._show_page(self.details)
         if focus_notes:
             self.details.notes.setFocus()
         else:
             self.details.title.setFocus()
             self.details.title.end(False)
 
-    def close_details(self):
-        if not self.details_open():
+    def close_page(self):
+        if not self.page_open():
             return
-        self.details.title.clearFocus()
-        self.details.tid = None
+        if self.stack.currentWidget() is self.details:
+            self.details.title.clearFocus()
+            self.details.tid = None
         self.stack.setCurrentIndex(0 if self.store.settings["view"] == "list" else 1)
         self.input.show()
         self.search.setVisible(self._searching)
@@ -852,8 +875,8 @@ class Panel(QWidget):
     def set_view(self, view: str, animate: bool = True):
         if view not in ("list", "board"):
             view = "list"
-        if self.details_open():
-            self.close_details()
+        if self.page_open():
+            self.close_page()
         self.store.set_setting("view", view)
         self.btn_list.setChecked(view == "list")
         self.btn_board.setChecked(view == "board")
@@ -917,7 +940,7 @@ class Panel(QWidget):
     def show_panel(self):
         if self.isVisible() and not self._hiding:
             self._activate()
-            if not self.details_open():
+            if not self.page_open():
                 self._focus_input()
             return
         self._stop_anim()
@@ -945,7 +968,7 @@ class Panel(QWidget):
         grp.finished.connect(self._snap_to_edge)
         grp.start()
         self._anim = grp
-        if not self.details_open():
+        if not self.page_open():
             self._focus_input()
 
     def hide_panel(self):
@@ -982,7 +1005,7 @@ class Panel(QWidget):
                 self.hide_panel()
             else:
                 self._activate()
-                if not self.details_open():
+                if not self.page_open():
                     self._focus_input()
         else:
             self.show_panel()
@@ -1051,8 +1074,8 @@ class Panel(QWidget):
         if e.key() == Qt.Key.Key_Escape:
             if self.note_bar.isVisible():
                 self.close_note()
-            elif self.details_open():
-                self.close_details()
+            elif self.page_open():
+                self.close_page()
             elif self.input.hasFocus() and self.input.text():
                 self.input.clear()
             elif self._searching:

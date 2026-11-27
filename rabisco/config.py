@@ -61,6 +61,7 @@ DEFAULT_SETTINGS = {
     "collapsed": ["done"], # seções recolhidas na lista
     "hotkey": "Ctrl+Alt+K",
     "reminders": True,     # notificação quando chega a hora do prazo
+    "report_period": "week",  # today | yesterday | week | month | custom
 }
 
 # Glifos da fonte Segoe Fluent Icons (Win11) / Segoe MDL2 Assets (Win10)

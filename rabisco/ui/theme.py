@@ -161,6 +161,7 @@ def stylesheet() -> str:
         padding:2px 10px; font-size:8.5pt;
     }}
     QPushButton#undo:hover {{ background:{C['card_hover']}; color:{C['accent']}; }}
+    QTextBrowser#report {{ background:transparent; border:none; }}
     QFrame#overlay {{ background:{C['bg']}; border-radius:8px; }}
     QLabel#overlaySection {{ color:{C['accent']}; font-weight:600; padding-top:8px; }}
     QLabel#kbd {{
